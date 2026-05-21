@@ -449,4 +449,74 @@ output is what makes the v2 rule obvious. v1's reasoning ("BOTH
 empty is the cleanest definition") was internally consistent and
 defensible in the abstract. Real data won the argument.
 
+## 8. Chunk reviewer is read-only and shares its builders with ingest — `review_rfi_chunks.py`
+
+**Context.** Spec Step 4 inserts a human approval gate between
+"discovery + loading" and "embedding + ChromaDB". The Step-3 loader
+produces 279 `Row` objects across four files; Step 5 will embed
+them and write to ChromaDB; in between, the reviewer prints the
+chunks that *would* be embedded and asks the human if they look
+right. The interesting design question is what the reviewer should
+*do* relative to what it shows.
+
+**Options considered.**
+
+- *Reviewer builds its own preview format, ingest uses a different
+  one.* Two code paths for chunk construction. Easiest to write but
+  the worst design — the reviewer's preview can drift from the
+  ingester's actual output, and the human approves a chunk shape
+  that isn't quite what gets embedded.
+- *Reviewer calls a chunk-builder library, ingest calls the same
+  library.* One source of truth. Picked.
+- *Reviewer triggers ingest on 'yes'.* Tighter coupling, fewer
+  steps for the human, but loses the property "rerun the reviewer
+  without consuming embedding API calls". Rejected.
+
+**Choice and reason.** `review_rfi_chunks.py` defines
+`build_combined_chunks(rows) -> list[dict]` and
+`build_separated_chunks(rows) -> list[dict]`, prints their output
+verbatim, and stops. Step 5's `ingest_rfi.py` will import and call
+the same two functions to construct the chunks it sends to
+`mistral-embed`. The chunk shape the human sees IS the chunk shape
+that lands in ChromaDB; there is no second representation.
+
+The reviewer does no DB call, no Mistral call, no file write. It
+exists so the human can iterate (re-profile a file, re-edit a
+config, re-load, re-review) without burning embedding API calls or
+polluting the vector store.
+
+**On using dicts rather than a `Chunk` dataclass.** ChromaDB's
+`collection.add(documents=..., metadatas=...)` API accepts parallel
+lists of strings and dicts. A `Chunk(text, metadata)` dataclass
+would add a layer with no behaviour beyond what the dict already
+expresses. The dict matches the API exactly; the builders return
+exactly what the embedder + DB layer want. The `Row` dataclass
+remains the typed representation upstream of chunking — that one
+earns its dataclass-ness because it's the format-agnostic
+intermediate model that the chunker dispatches on.
+
+**On empty-answer chunks under Strategy B.** The loader (per
+entry 7) keeps rows where the question is present but the answer
+is blank — these are "asked but unanswered" rows, 14 of them
+across the corpus. Strategy A bundles them into a single chunk
+where the question text dominates the word count. Strategy B emits
+them as two chunks: a question chunk (non-empty) and an answer
+chunk (empty string). The reviewer surfaces this with
+`min_words: 0` on Strategy B's aggregate stats. The decision of
+what to do about empty answer chunks belongs to Step 5 (ingest) —
+either skip the empty answer chunk before embedding, or send it
+and accept whatever `mistral-embed` does with empty input. The
+reviewer's job is to make the situation visible, not to silently
+prune.
+
+**What it teaches.** When two stages of a pipeline both need to
+construct the same object, factor the construction into a function
+both call. The temptation under time pressure is to copy-paste,
+which compiles fine and works fine until the constructions drift
+out of sync — at which point the bug is silent and hard to find.
+A shared builder is also a place to put the structural decisions
+(prefix wording, context handling, metadata fields) so they live
+in one location and the human approval gate is asking about *the*
+chunk shape, not *a* chunk shape.
+
 <!-- Next entry goes here -->
