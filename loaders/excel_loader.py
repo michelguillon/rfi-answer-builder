@@ -29,19 +29,23 @@ an answer wants to open the source file and verify it. The cost
 of the loader on the same file produces the same pair_ids, which
 is what we want for deterministic Q↔A linkage downstream.
 
-ARCHITECTURAL DECISION: skip a row only when BOTH the question and
-the answer cells are empty. Three alternatives existed:
-  - Skip when question is empty: drops legitimate Q&A rows where
-    the question column happens to be a continuation of a multi-row
-    answer (rare but observed) and rows where the question is
-    pre-printed but the cell happens to be blank.
-  - Skip when answer is empty: drops "asked but unanswered" rows,
-    which are useful to ingest — they tell us a question was asked
-    even if the team chose not to answer it.
-  - Skip when both empty: the BOTH-empty rule is the cleanest "this
-    row carries no semantic content" definition. Picked.
-A row with a question and a blank answer enters the corpus with
-answer="" — downstream code can decide whether to surface it.
+ARCHITECTURAL DECISION: skip a row when the QUESTION cell is empty.
+This rule was tightened from "skip only when BOTH question and
+answer are empty" after running the loader on real data. The
+empirical motivation: the original rule kept rows where an answer
+existed but the question column was blank, on the theory that an
+answer alone might carry useful content. In practice, every such
+row in the corpus turned out to be a profiler mis-mapping (most
+visibly on `INTERNAL - Reach Customer facing DPIA questions.xlsx`,
+where the LLM tagged the "Gateway Questions" column as `context`
+and the sub-detail column as `question`, producing rows of the
+form Q='', A='no', C='<the real question>'). Those rows can't be
+retrieved by question similarity (no question to match against),
+so admitting them costs corpus quality with no retrieval upside.
+The tighter rule treats a row with no question as no Q&A row, full
+stop. Rows where the question is present but the answer is blank
+("asked but unanswered") are still loaded — that case is real and
+preserved by the rule.
 
 ARCHITECTURAL DECISION: metadata is built per-row at load time, not
 deferred to the chunker. Every Row carries its own metadata dict
@@ -264,7 +268,10 @@ def load_excel(path: str | Path, config: dict) -> list[Row]:
         excel_row = first_data_row + offset
         question = _cell_at(row_values, q_col)
         answer = _cell_at(row_values, a_col)
-        if not question and not answer:
+        # No question = no Q&A row, regardless of what the answer
+        # cell holds. See the ARCHITECTURAL DECISION block above on
+        # why this is stricter than "both empty".
+        if not question:
             continue
         context = _cell_at(row_values, c_col) if c_col else ""
 

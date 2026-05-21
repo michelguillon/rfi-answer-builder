@@ -384,4 +384,69 @@ real data), because silent data loss is the harder failure to
 diagnose. Stupid heuristics that you can explain are better than
 clever heuristics you can't audit.
 
+## 7. Loader skip rule tightened from "both empty" to "question empty" — `loaders/excel_loader.py`
+
+**Context.** The v1 loader skipped a row only when both the question
+and the answer cells were empty. The reasoning at the time was that
+an "asked but unanswered" row (question present, answer blank) was
+useful to keep, and the symmetric case (answer present, question
+blank) was rare. That symmetry held only until the loader was run on
+the four real RFI files. File 3 (`INTERNAL - Reach Customer facing
+DPIA questions.xlsx`) produced 14 rows in the form Q='', A='no'
+because the Phase 2 LLM mapped column A (the "Gateway Questions"
+column with the actual question text) as `context` and column B as
+`question`. The "real" question lived in `context`; the `question`
+cell was blank.
+
+**Options considered.**
+
+- *Keep the BOTH-empty rule, hand-fix file 3's config.* The cleanest
+  surgical option, but requires per-file manual editing every time a
+  file like this shows up. The spec is meant to handle "files we
+  haven't seen yet" gracefully — one-off hand-editing is fine for a
+  fixed corpus but doesn't generalise to new files.
+- *Tighten to "question empty -> skip".* Treats a row without a
+  question as not a Q&A row, regardless of what the answer cell
+  holds. Drops file 3's 14 mis-mapped rows automatically and would
+  catch any future file with the same shape without human
+  intervention.
+
+**Choice and reason.** Tighten the rule. A row without a question
+cannot be retrieved by question similarity — that is the core
+retrieval pattern. Keeping such rows in the corpus costs storage and
+pollutes BM25 / reranker results with chunks that have no question
+text to match against. The benefit (catching an LLM-mis-mapped row
+that happened to put real content in the answer cell) is a benefit
+to that specific row only — the row is still mis-attributed (its
+"answer" is "no" to a question we discarded as "context"). Better
+to drop it cleanly than to keep a wrong-shape pair.
+
+The "asked but unanswered" case (question present, answer blank) is
+preserved by the new rule — it has Q, so it loads. File 1 keeps its
+1 such row, file 2 keeps its 10, file 3 keeps its 3.
+
+**Impact on corpus size.**
+
+| File | Before (v1) | After (this change) |
+|---|---|---|
+| Utiq_Publicis RFI | 22 | 22 (unchanged) |
+| Utiq_Publicis_2023 Futureproof | 140 | 140 (unchanged) |
+| INTERNAL Reach DPIA | 81 | 67 (14 mis-mapped rows dropped) |
+| Guardian OpusVerify | 50 | 50 (unchanged) |
+| **Total** | **293** | **279** |
+
+**What it teaches.** When a heuristic is symmetric and one direction
+turns out to be a footgun in real data, the right move is to break
+the symmetry, not to add complexity. The original BOTH-empty rule
+treated "Q without A" and "A without Q" as the same shape. They are
+not: a corpus that retrieves by question similarity needs a question
+on every row, but tolerates a missing answer. The asymmetry of the
+data demands the asymmetry of the rule. Designing the v1 rule
+symmetrically was wrong; the fix is one line of code.
+
+A meta-lesson: the cost of running v1 on real data and observing the
+output is what makes the v2 rule obvious. v1's reasoning ("BOTH
+empty is the cleanest definition") was internally consistent and
+defensible in the abstract. Real data won the argument.
+
 <!-- Next entry goes here -->
