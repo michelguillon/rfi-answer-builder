@@ -1,21 +1,42 @@
 # CLAUDE.md — RFI Answer Builder
 
 Operating guide for Claude Code in this repo. Read this first, then
-`docs/SPEC_RFI_Standalone.md` for the architectural decisions and ordered
-implementation steps. The spec is the single source of truth; this file
-captures the conventions that govern how to work inside it.
+the spec for whichever layer you are working on (see "Current state"
+below). The spec for each layer is the single source of truth; this
+file captures the conventions that apply across both layers.
+
+---
+
+## Current state
+
+The repo has two layers, each with its own spec:
+
+| Layer | Spec | Status |
+|---|---|---|
+| **Pipeline** (CLI, ChromaDB, eval) | [docs/SPEC_RFI_Standalone.md](docs/SPEC_RFI_Standalone.md) | **Complete** — all 7 spec steps shipped + 14 learning-note entries + production recommendation. See git log for the per-step commits. |
+| **UI** (FastAPI + React + SSE) | [docs/SPEC_UI.md](docs/SPEC_UI.md) | **Next.** 9 implementation steps; should be built on a feature branch off main, not on main directly. |
+
+The pipeline is feature-complete and the eval has landed a production
+recommendation (`rfi_separated_cosine` + semantic + crossencoder +
+top-k=3). The UI layer wraps the existing CLI scripts with a web app
+so non-technical staff can run both workflows (ingest + answer)
+without touching the CLI. **The pipeline scripts (`profile_excel.py`,
+`ingest_rfi.py`, `query_rfi.py`) stay unchanged — the UI wraps them
+as services. Don't edit them for UI reasons.**
 
 ---
 
 ## What this repo is
 
-A multi-document RFI Q&A system. Ingest 3 Excel files with inconsistent
-schemas, profile each, store in a shared corpus with rich metadata, and
-answer new RFI questions using hybrid retrieval (BM25 + semantic) with
-optional reranking. See [docs/SPEC_RFI_Standalone.md](docs/SPEC_RFI_Standalone.md).
+A multi-document RFI Q&A system. Ingest Excel RFIs with inconsistent
+schemas, profile each, store in a shared corpus with rich metadata,
+and answer new RFI questions using hybrid retrieval (BM25 + semantic)
+with optional reranking. Now growing a web UI on top.
 
-This is a **private repository**. It will be handed over to the employer
-on exit. No proprietary client data may ever land in a commit.
+This is a **private repository**. It will be handed over to the
+employer on exit, and a sanitised version may eventually go public
+with sample data only (see SPEC_UI.md "Public repo preparation"). No
+proprietary client data may ever land in a commit.
 
 ---
 
@@ -129,17 +150,44 @@ that collides, prefix it: `rfi_inspect.py`, not `inspect.py`.
 
 ## Step-by-step workflow
 
-The spec lists 7 ordered implementation steps (Row dataclass → Excel
-profiler → Excel loader → chunk reviewer → ingestion → query → eval).
-**Work through them in order. Do not move to the next step until the
-current one is verified.** Each step has a Claude Code prompt embedded
-in the spec — treat that as the contract for what to build.
+Whichever spec is active: the spec lists ordered implementation steps
+(7 for the pipeline, 9 for the UI). **Work through them in order. Do
+not move to the next step until the current one is verified.** Each
+step has a Claude Code prompt embedded in the spec — treat that as
+the contract for what to build.
 
 After each step:
-1. Verify the artifact works (import test, CLI smoke test, or both).
+1. Verify the artifact works (import test, CLI smoke test, browser
+   test for UI work, or whatever the step's contract demands).
 2. Write the `ARCHITECTURAL DECISION:` block(s) into the code.
 3. Add the corresponding entry to `docs/LEARNING_NOTES_RFI.md`.
 4. Stop and confirm with the user before starting the next step.
+
+**Branch discipline.** Pipeline work landed directly on `main`
+(commits 35af1cf .. 338c9d3). UI work goes on a feature branch off
+main (e.g. `feat/ui`) — don't push to main directly. Merge to main
+when the UI's Definition of Done is met.
+
+---
+
+## Active memory
+
+Two pieces of guidance from earlier work in this repo live in the
+project's memory directory and apply to anything that touches the
+retrieval/generation path:
+
+- **Verbose provenance is the default for RAG outputs.** Show source
+  + pair_id + ranking scores alongside the generated answer; don't
+  hide the retrieval trace. The CPO's positive feedback specifically
+  cited this. UI answer cards should preserve this visibility.
+- **Cross-tenant content leakage is a known unfixed issue.**
+  Generated answers can include past client names verbatim because
+  the source corpus does. LEARNING_NOTES entry 14 lists the design
+  options (prompt guard + post-redaction). When building the UI's
+  answer workflow, at minimum surface this risk to the human reviewer
+  — e.g. flag answers that mention a client name other than the
+  current target client. Don't ship a "send directly to client" path
+  that bypasses human review.
 
 ---
 
@@ -160,14 +208,19 @@ deliberate architectural decision and document it in the learning notes.
 
 ---
 
-## Definition of done for this repo
+## Definition of done
 
-Tracked in the spec's "Definition of done" section. The headline items:
+**Pipeline (SPEC_RFI_Standalone.md) — DONE.**
+- [x] Excel profiler on all 4 real RFI files
+- [x] Both chunking strategies ingested into 4 collections (1,646
+      chunks total)
+- [x] Hybrid retrieval + 3 rerankers implemented
+- [x] Eval framework with hallucination/retrieval-gap reported separately
+- [x] Comparison table + production recommendation (entry 13)
+- [x] LEARNING_NOTES_RFI.md (14 entries)
 
-- Excel profiler working on all three RFI files
-- Both chunking strategies ingested into 4 collections
-- Hybrid retrieval + reranking implemented
-- Eval framework with hallucination and retrieval-gap rates reported
-  **separately** (conflating them hides retrieval failures)
-- Comparison table complete with a production recommendation
-- `docs/LEARNING_NOTES_RFI.md` written with findings
+**UI (SPEC_UI.md) — TODO.** Tracked in that spec's own "Definition
+of done". Headline items: SSE endpoints, session cleanup, export
+pipeline, both workflows usable in the browser, sample data for
+public release, auth omission documented, LEARNING_NOTES updated
+with UI-specific findings.

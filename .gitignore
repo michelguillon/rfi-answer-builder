@@ -55,6 +55,17 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# --- UI layer (SPEC_UI.md) -----------------------------------------------
+# Per-session uploads, profiles, configs, answers, outputs live here.
+# Cleaned up by the backend on a 24h schedule. Never commit — the files
+# include uploaded RFIs and generated answers.
+tmp/
+
+# Frontend build artefacts and node_modules. Big, machine-specific,
+# regenerable via `npm install` + `npm run build` from package.json.
+frontend/node_modules/
+frontend/dist/
+
 # --- Claude Code local settings (machine-specific) ----------------------
 .claude/settings.local.json
 
