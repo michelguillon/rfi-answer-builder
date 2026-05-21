@@ -852,4 +852,78 @@ from query_rfi. Both cases: *the script doing the human-facing
 work and the script measuring quality run identical code*. There
 is no "production path vs measurement path" drift to debug.
 
+## 12. Hand-verification with a domain expert — what the formal eval can't measure
+
+**Context.** Between writing the eval framework and running the full
+36-configuration matrix, three real RFI questions arrived from a
+domain expert (CPO). The questions covered privacy/regulatory
+compliance, security measures, and a yes/no capability question —
+the same shapes the eval dataset paraphrases. They were a chance to
+stress-test the production-realistic configuration
+(`rfi_separated_cosine` + hybrid + crossencoder + top-k=3) against
+hand-picked queries before any automated scoring.
+
+**What hand-verification surfaced that automated metrics wouldn't.**
+
+- *The provenance trace is the headline output, not the answer.*
+  The expert's positive feedback was specifically about seeing
+  *which* past Q&A pairs contributed to each answer, with the
+  crossencoder scores attached. That's not a metric the eval
+  framework measures — Recall@3 records "was the right chunk in
+  top-3" as a binary, but it doesn't capture "was the user shown
+  *why* the system picked these chunks." The verbose-provenance
+  default in `query_rfi.py` is a usability decision the eval
+  cannot validate. (Saved as feedback memory; future RAG outputs
+  in this codebase will default to verbose-provenance.)
+
+- *The score gap between top-1 and top-2 is a confidence signal
+  to a human.* On the three CPO questions, top-1 had crossencoder
+  scores 4x–9x higher than top-2 — visibly "the system is
+  confident" rather than "the system is guessing between two
+  candidates". Recall@3 / MRR aggregate this signal away
+  completely (a top-1 score of 9 and a top-1 score of 0.1 both
+  count as recall=1 if the right pair_id is at rank 1). For a
+  human reading retrievals, the gap is real signal: it says "if
+  this answer is wrong, the system would have known".
+
+- *Near-exact wording matches reveal the corpus's shape, not
+  just the system's quality.* For two of the three CPO questions
+  the corpus contained a past question with essentially
+  identical wording. The retrieval got those right at rank 1
+  with high scores — but that says as much about the test
+  question being well-trodden ground as about the system. The
+  harder eval signal is questions where no near-exact past
+  question exists, which is what the eval dataset's
+  paraphrasing is meant to provide. Hand-verification flags
+  which test queries are too easy.
+
+- *Generated-answer quality has dimensions the LLM judge
+  doesn't capture.* The judge scores faithfulness, relevance,
+  completeness. A domain expert reading the answer also judges
+  things like phrasing-fitness-for-a-real-RFI-response
+  (corporate vs casual tone, hedging vs declarative voice,
+  attribution to specific documents like "DPIA Overview" vs
+  generic gestures). Those qualities are part of "is this
+  actually shippable as an answer", and only a human reader
+  catches them.
+
+**What it teaches.**
+
+Two things. First, automated eval and hand-verification measure
+different qualities, and a healthy build uses both. Automated
+eval scales — it can grind through 36 configurations × 20
+questions and rank them quantitatively. Hand-verification
+doesn't scale, but it catches usability and tone problems
+automated metrics are blind to. Skipping either in favour of
+the other is a category error.
+
+Second, the score gap between top-1 and top-2 (and more broadly
+the *distribution* of scores in the retrieval pool) carries
+calibration information that scalar aggregates discard. A
+production system that surfaces only top-k chunks without scores
+hides this from the user. The pattern emerging here — "show
+retrievals with scores BEFORE the answer" — is doing real work
+beyond just making the system feel transparent. It's letting the
+reader calibrate their trust in each answer on the fly.
+
 <!-- Next entry goes here -->
