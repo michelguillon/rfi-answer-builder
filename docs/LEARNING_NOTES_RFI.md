@@ -926,4 +926,184 @@ retrievals with scores BEFORE the answer" — is doing real work
 beyond just making the system feel transparent. It's letting the
 reader calibrate their trust in each answer on the fly.
 
-<!-- Next entry goes here -->
+## 13. Eval results: production recommendation + the surprises real data delivered
+
+**Context.** The full 36-configuration matrix completed: 4 collections
+× 3 retrieval modes × 3 rerankers × 20 questions (17 in-scope, 3
+out-of-scope). The data lives in
+`outputs/rfi_validation/eval_results.json` and
+`outputs/rfi_validation/comparison.md`. This entry distils the
+headline findings and lands a production recommendation per the
+spec's Definition of Done.
+
+**Headline: every config got hallucination refusal exactly right.**
+HallucRefusal = 1.000 in all 36 configurations. All three
+out-of-scope questions ("airspeed velocity of an unladen swallow",
+"how to cook risotto", "FIFA World Cup 2022 winner") were refused
+with "I cannot find this in our corpus." across every (collection,
+retrieval, rerank) combination. The hallucination guard in the
+generation prompt is doing its job — the system never fabricates.
+This is the single most important calibration property of the
+system, and the eval confirms it.
+
+**LLM-judge over-scores. Real signal lives in retrieval-gap and
+completeness.** Faithfulness = 5.00 and Relevance = 5.00 across
+all 36 configurations. Either the answers are uniformly perfect
+(unlikely) or `mistral-small` as a judge is too generous on those
+axes (the more probable explanation). Completeness shows variation
+(4.33 to 4.86), and retrieval-gap shows real variation (0.176 to
+0.471). Those two are the actionable comparison metrics. The flat
+faithfulness/relevance scores are themselves a finding — a
+production deployment that relies on LLM-as-judge for ongoing
+quality monitoring needs a tougher rubric, or a different judging
+model, or paired-comparison rather than absolute scoring.
+
+**Findings by axis (means across the configurations sharing that
+axis value):**
+
+*Retrieval mode:*
+- semantic: R@3=0.990, MRR=0.940, RetrGap=0.275  ← best
+- hybrid:   R@3=0.971, MRR=0.944, RetrGap=0.294
+- bm25:     R@3=0.951, MRR=0.922, RetrGap=0.343  ← worst
+
+Counter to the spec's intuition, hybrid does NOT beat semantic on
+this corpus. Likely reasons: the corpus is small (280–540 chunks
+per collection), the test questions are close paraphrases of
+corpus questions so semantic similarity is already strong, and
+BM25 occasionally promotes high-token-overlap chunks that aren't
+topically relevant. RRF's contribution is small when semantic
+alone is near-saturated; on a larger or more terminology-heavy
+corpus the hybrid advantage would likely reappear.
+
+*Rerank mode:*
+- crossencoder: R@3=0.990, MRR=0.966, RetrGap=0.328
+- none:         R@3=0.971, MRR=0.912, RetrGap=0.324
+- llm:          R@3=0.951, MRR=0.927, RetrGap=0.260  ← best on gap, completeness 4.67
+
+Crossencoder wins on retrieval precision (right chunk at rank 1)
+but LLM rerank produces the lowest refusal rate AND highest
+completeness (4.67 vs 4.57 for crossencoder). The split is
+real: crossencoder rates "which chunk is most semantically
+relevant to the query"; the LLM rerank rates "which chunks together
+will help generate an answerable response", which is a slightly
+different criterion. The LLM rerank pays one extra API call per
+query for that quality lift.
+
+*Chunking strategy:*
+- separated: R@3=0.980, MRR=0.955
+- combined:  R@3=0.961, MRR=0.915
+
+Separated wins, marginally. The spec's intuition that
+question-to-question matching is more precise than Q-and-A-blended
+matching is borne out, but the margin is 2%/4% — not the
+landslide the spec implied. With a stronger reranker the gap
+narrows further. Combined survives as a real alternative if
+implementation simplicity matters.
+
+*Distance metric:*
+- cosine: R@3=0.967, MRR=0.931
+- l2:     R@3=0.974, MRR=0.938
+
+L2 has a small but consistent edge. Both metrics are L2-normalised
+(mistral-embed produces unit-norm vectors), so L2 distance and
+cosine distance are mathematically related — the differences
+empirically observed are within measurement noise on a 17-question
+in-scope set.
+
+**Top 5 configurations by lowest retrieval-gap (among those with
+Recall@3 = 1.0):**
+
+| Rank | Collection | Retrieval | Rerank | RetrGap | Compl |
+|---|---|---|---|---|---|
+| 1 | rfi_combined_l2 | semantic | llm | 0.176 | 4.86 |
+| 2 | rfi_separated_l2 | hybrid | none | 0.176 | 4.57 |
+| 3 | rfi_combined_cosine | semantic | none | 0.235 | 4.46 |
+| 4 | rfi_combined_l2 | semantic | crossencoder | 0.235 | 4.46 |
+| 5 | rfi_separated_cosine | semantic | crossencoder | 0.235 | 4.62 |
+
+**Production recommendation.**
+
+Two candidates depending on how much budget the production system
+has per query:
+
+*If per-query latency and API cost matter (default):*
+> **`rfi_separated_cosine` + `semantic` + `crossencoder` + top-k=3**
+>
+> Recall@3 = 1.000, MRR = 0.971, RetrGap = 0.235, HallucRefusal =
+> 1.000, Completeness = 4.62, Faith/Rel = 5.00.
+>
+> Crossencoder runs locally (one-time image bloat, no per-query API
+> cost). Semantic retrieval is the single strongest signal on this
+> corpus. Separated strategy gives the best retrieval metrics and
+> supports the cleanest Q→A linkage. Cosine is the conventional
+> embedding similarity metric (L2 marginally better but cosine
+> matches typical ChromaDB / embedding-API defaults — less
+> surprising for future maintainers).
+
+*If completeness and refusal rate matter more than per-query cost:*
+> **`rfi_combined_l2` + `semantic` + `llm` rerank + top-k=3**
+>
+> Recall@3 = 1.000, MRR = 0.931, RetrGap = 0.176 (lowest), Compl =
+> 4.86 (highest).
+>
+> Pays one extra `mistral-small` call per query for the relevance
+> rerank, in exchange for substantially fewer "I cannot find this"
+> refusals on in-scope questions and higher completeness scores.
+> Worth it if a polished response is the product, not the
+> retrieval list.
+
+**What it teaches.**
+
+Three lessons.
+
+First, spec intuitions are hypotheses, and the eval is what
+adjudicates them. The spec leaned toward hybrid retrieval +
+separated + cosine + crossencoder as the default. The data says
+semantic beats hybrid on this corpus, separated wins by a
+narrower margin than expected, L2 marginally beats cosine, and
+LLM rerank actually edges out crossencoder on the metrics that
+matter most. Without the eval, the production system would
+plausibly have shipped a sub-optimal config. The eval is doing
+real work, not just confirming priors.
+
+Second, LLM-as-judge has a calibration problem worth designing
+for. Faithfulness = 5.00 and Relevance = 5.00 across every
+configuration is not credible. A judge prompt that allows
+gradations only at the top (5/5 on a 1-5 scale) is one that
+can't discriminate good from very good. For ongoing production
+monitoring, options include: (a) anchor the judge with explicit
+counter-examples ("a 5 means X; a 3 means Y; a 1 means Z"), (b)
+use paired-comparison ("which of these two answers is better?")
+where the judge picks one rather than scoring both at the
+ceiling, or (c) trust retrieval_gap and completeness as the
+distinguishing metrics and accept that f/r are
+operating-correctly checks rather than ranking signals.
+
+Third, "Recall@3 = 1.0 doesn't mean the system answered." Many
+configurations hit perfect Recall@3 but still refused on 18-47% of
+in-scope questions. The refusals come from a mix of (a) corpus
+gaps where the retrieved chunk's answer cell is empty (e.g. the
+Reach DPIA file has 3 "asked but unanswered" rows), (b) cases
+where the retrieved chunk is the right *topic* but the
+generation prompt judges the context insufficient to answer
+confidently. This is the price of a strong hallucination guard
+— the system errs toward refusal. The retrieval_gap_rate is the
+right metric to monitor that trade-off; it has to be reported
+separately from hallucination_refusal_rate for either signal to
+be actionable.
+
+**Open questions worth investigating later.**
+
+- *Which specific in-scope questions get refused?* The
+  retrieval_gap floor (0.176 = 3 of 17 questions) probably tracks
+  the empty-answer rows in the corpus. Verifying this would
+  confirm the gap is a corpus property, not a system bug.
+- *Does the hybrid advantage emerge at scale?* This corpus is
+  ~280-540 chunks per collection. With 5,000+ chunks and more
+  acronym-heavy queries, the BM25 contribution to hybrid would
+  likely matter more.
+- *What does a stricter judge prompt produce?* If the
+  faithfulness/relevance scores actually spread out under a
+  better rubric, the comparison table gains additional ranking
+  signal and the per-config differences sharpen.
+
