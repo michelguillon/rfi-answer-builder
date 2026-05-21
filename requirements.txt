@@ -6,3 +6,14 @@ pdfplumber>=0.10.0
 # resolved formula values rather than formula strings — important because
 # RFI answer cells sometimes reference other sheets via formula.
 openpyxl>=3.1.0
+# Hybrid retrieval (spec Step 6). BM25 keyword scoring complements
+# semantic search on queries that contain exact terminology, acronyms,
+# or regulatory references where the embedding model may favour
+# paraphrases.
+rank_bm25>=0.2.2
+# Cross-encoder reranking (spec Step 6, Decision 5 option B).
+# Heavy dependency (~600 MB image bloat for torch + transformers + the
+# sentence-transformers wrapper + the MiniLM model weights). The
+# crossencoder is the production-realistic reranker — runs locally, no
+# API cost per query, ~50ms per (query, chunk) pair.
+sentence-transformers>=3.0.0

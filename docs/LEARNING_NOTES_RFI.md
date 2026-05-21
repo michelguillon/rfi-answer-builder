@@ -623,4 +623,144 @@ at the work-unit level. Together they make the ingester robust to
 both. Picking just one of the two leaves a hole that the other
 covers.
 
+## 10. Query: three retrieval modes, three rerankers, role-filtered separated, refusal-guarded generation — `query_rfi.py`
+
+**Context.** Step 6 ties together everything before it: take a
+natural-language question, find the most-relevant past Q&A pairs
+in ChromaDB, optionally reapply a more precise relevance signal,
+and (for Strategy B) fetch the paired answers via the linkage the
+chunker established. The spec asks for three retrieval modes
+(semantic, BM25, hybrid) and three rerankers (none, LLM,
+crossencoder) — the full experiment matrix the eval step will
+compare. Several non-obvious design calls landed.
+
+**Retrieval-pool sized for reranking, not for the final answer.**
+The CLI exposes `--pool-size` (default 20) and `--top-k` (default 3).
+Retrieval returns the pool; the reranker chooses the top-k from
+that pool. The pool has to be wide enough that the reranker can
+actually improve over retrieval's ranking; if the pool is already
+top-3, the reranker just rubber-stamps. 20-pick-3 is the spec's
+recommended shape and it matches the empirical behaviour observed
+here — the crossencoder routinely promotes a chunk from rank 4-6
+into the top-3 because the cross-encoder reads the (query, chunk)
+pair carefully where semantic alone was approximating.
+
+**Three retrieval modes, complementary failure modes.**
+
+- *Semantic* embeds the query with `mistral-embed` and asks
+  ChromaDB for nearest neighbours. Strong on paraphrases:
+  "GDPR compliance" surfaces "privacy legislation adherence" even
+  though those phrases share no tokens. Weak on exact terminology
+  (an acronym query may rank a thematic match higher than the
+  literal-acronym chunk).
+- *BM25* scores `tf × idf` on tokenised text. Strong on exact
+  terms, acronyms, regulatory refs, product names. Weak on
+  semantic paraphrase — "data retention policy" misses a chunk
+  about "how long we keep information".
+- *Hybrid* via Reciprocal Rank Fusion (k=60) merges both rankings.
+  Empirically, on the GDPR test query: semantic ranked Guardian
+  row 29 at #4 and BM25 ranked it at #3; the fused score put it
+  at #2. Neither signal alone surfaced it that high.
+
+RRF was chosen over learned weight fusion because it requires no
+training data, no per-query tuning, and is robust to score-scale
+differences (one ranking returns distances 0..1, the other
+returns BM25 scores 0..15). Spec Decision 4 calls this out
+explicitly.
+
+**Three rerankers, different cost/quality profiles.**
+
+- *none*: zero overhead, just `pool[:top_k]`. The retrieval
+  ranking is what the generator sees.
+- *crossencoder* (`cross-encoder/ms-marco-MiniLM-L-6-v2`):
+  local, ~50 ms per (query, chunk) pair. No API cost per query.
+  Brings ~600 MB of torch + transformers as transitive deps —
+  the image bloat happens at build time, not query time. Runs
+  via a lazy import so queries that don't use it pay no import
+  latency.
+- *llm* via mistral-small-latest: one extra API call per query
+  (~1200 input tokens, small JSON output). Cheap per call but
+  not free. Robust to nuance — empirically picked the same
+  top-3 as the crossencoder on the GDPR test query, just with
+  different scoring semantics.
+
+The crossencoder is the production-realistic default because it
+scales linearly with chunk count without per-query API cost.
+The LLM reranker is included because it's a good teaching tool
+("here is what reranking is doing") before swapping in the
+optimised version. Spec Decision 5 makes the same recommendation.
+
+**Role filter is load-bearing for separated collections.**
+This one I got wrong on the first attempt. For Strategy B,
+question chunks and answer chunks both live in the same
+ChromaDB collection (distinguished by `metadata.role`). The
+retrieval API returned both — and the crossencoder happily picked
+answer chunks because they have more text and so more keyword
+overlap with the query. The Q→A linkage step then tried to fetch
+the paired answer for what was already an answer chunk and
+crashed on `DuplicateIDError`.
+
+The fix is a `where={"role": "question"}` filter passed to
+ChromaDB's `query()` and to `collection.get()` for the BM25
+corpus. Question-to-question matching is the entire point of
+Strategy B — mixing answer chunks into the retrieval pool
+defeats it. The filter applies at the DB level (cheap) rather
+than as a post-hoc Python pass.
+
+**Q→A linkage by id lookup, not metadata WHERE.** After retrieval,
+each top-k question chunk has id `<pair_id>__question`. The
+paired answer is `<pair_id>__answer`. A single
+`collection.get(ids=[...])` call resolves the linkage —
+deterministic, indexed, no metadata scan. ChromaDB's id index
+makes this an O(k) operation. Using `where={"pair_id": ...}`
+would force a metadata filter scan per chunk, which is fine on
+small collections but won't scale.
+
+A defensive corner: some question chunks have no paired answer
+because the original Excel row had an empty answer cell and the
+Step 5 ingester filtered it out. The fetcher returns a placeholder
+text "(answer not found)" rather than raising — the generator
+sees the missing answer alongside the present ones and decides
+what to do.
+
+**Hallucination guard in the generation prompt.**
+The generation prompt ends with: *"If the past Q&A pairs don't
+cover the question, reply exactly: 'I cannot find this in our
+corpus.'"*. Without this, Mistral confabulates plausible answers
+when the corpus is silent on a topic. With it, refusals are
+distinguishable from real answers — which is exactly what spec
+Decision 6 calls out as the "hallucination refusal vs retrieval
+gap" distinction the eval framework needs to measure.
+
+Empirically: a query "What is the airspeed velocity of an
+unladen swallow?" against the GDPR-laden corpus correctly
+returned *"I cannot find this in our corpus."* even though the
+retrieval still returned its best three keyword/embedding matches
+(none of which were related to airspeeds or swallows). The guard
+fires when context doesn't cover the question, not when retrieval
+fails to find anything.
+
+**What it teaches.** Three lessons.
+
+First: when a system has two related notions (question chunks and
+answer chunks for the same row), be explicit about which one each
+stage operates on. The role filter bug came from a tacit "the
+retrieval pool is the right thing to rerank" assumption that was
+true for combined collections and false for separated. Make the
+implicit explicit.
+
+Second: stacking layers (retrieval → rerank → generate) is only
+useful if each layer can improve over the one below. Reranking
+the top-3 directly is a no-op; reranking a top-20 pool can
+promote rank-4 to rank-1. Pool size and final-k must be chosen
+together.
+
+Third: the refusal path is part of the system, not an edge case.
+The hallucination guard is one sentence in the prompt; without it,
+the system fails silently on out-of-scope questions, which is the
+hardest failure mode to detect because the output *looks* like a
+real answer. The eval framework's "hallucination refusal rate"
+and "retrieval gap rate" metrics exist specifically to measure
+this — and require the system to actually refuse when it should.
+
 <!-- Next entry goes here -->
