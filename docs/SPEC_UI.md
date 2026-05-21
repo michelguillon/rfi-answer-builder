@@ -257,9 +257,9 @@ api/
     ingest.py          ← upload, profile (SSE), approve
     answer.py          ← upload, process (SSE), export
   services/
-    profiler.py        ← wraps profile_excel.py as async generator
-    ingester.py        ← wraps ingest_rfi.py as async generator
-    answerer.py        ← wraps query_rfi.py, iterates questions
+    profiler.py        ← wraps pipeline.profile as async generator
+    ingester.py        ← wraps pipeline.ingest as async generator
+    answerer.py        ← wraps pipeline.query, iterates questions
     exporter.py        ← builds filled Excel via openpyxl
   session.py           ← session dir management, cleanup
 ```
@@ -362,9 +362,15 @@ rfi-answer-builder/
 │   └── Dockerfile
 ├── loaders/                     ← unchanged
 ├── models/                      ← unchanged
-├── profile_excel.py             ← unchanged, wrapped by api/services
-├── ingest_rfi.py                ← unchanged, wrapped by api/services
-├── query_rfi.py                 ← unchanged, wrapped by api/services
+├── pipeline/                    ← importable package (see pipeline/CLAUDE.md)
+│   ├── profile.py               ← wrapped by api/services/profiler.py
+│   ├── ingest.py                ← wrapped by api/services/ingester.py
+│   ├── query.py                 ← wrapped by api/services/answerer.py
+│   ├── evaluate.py
+│   ├── review_chunks.py
+│   ├── mistral_helpers.py
+│   ├── loaders/
+│   └── models/
 ├── docker-compose.yml           ← updated, three services
 ├── docs/
 │   ├── SPEC_RFI_Standalone.md
@@ -414,7 +420,7 @@ deliverable before the next begins.
 > tmp/{session_id}/upload.xlsx, returns {session_id, filename,
 > detected_rows}.
 > GET /api/ingest/profile?session_id=: SSE endpoint. The profiler
-> service wraps profile_excel.py as an async generator, yielding
+> service wraps pipeline.profile as an async generator, yielding
 > events as each step completes:
 >   {type: "step", data: "message"}  ← each profiler step
 >   {type: "proposal", data: {...}}  ← final column mapping proposal
@@ -441,7 +447,7 @@ deliverable before the next begins.
 >   {type: "progress",   data: {batch: 3, total: 9}}
 >   {type: "complete",   data: {collection, chunks}}
 >   {type: "done",       data: {total_chunks, corpus_size}}
-> The ingester service wraps ingest_rfi.py.
+> The ingester service wraps pipeline.ingest.
 > Verify: approve a profiled RFI, confirm all 4 collections ingest
 > correctly and chunk counts match CLI ingestion.
 
@@ -461,7 +467,7 @@ deliverable before the next begins.
 >   {type: "answer",   data: {index, question, answer, sources,
 >                             confidence, pair_ids}}
 >   {type: "done"}
-> The answerer service calls query_rfi's retrieve + rerank + generate
+> The answerer service calls pipeline.query's retrieve + rerank + generate
 > functions. Default config: rfi_separated_cosine + hybrid + crossencoder
 > + top-k=3.
 > Save all answers to tmp/{session_id}/answers.json on done.
@@ -586,7 +592,7 @@ can be run through Workflow 2 against the sample corpus.
 **Demo script in README:**
 ```bash
 # Load sample corpus
-docker compose run backend python ingest_rfi.py --sample
+docker compose run backend python -m pipeline.ingest --sample
 
 # Start the app
 docker compose up

@@ -52,9 +52,9 @@ is a partial mitigation.
 cp .env.example .env
 # edit .env to add your MISTRAL_API_KEY
 
-# Build the pipeline image (downloads ~1 GB of deps incl. torch
+# Build the CLI image (downloads ~1 GB of deps incl. torch
 # and sentence-transformers for the crossencoder reranker)
-docker compose build pipeline
+docker compose build cli
 ```
 
 ### Workflow 1 — Add an RFI to the corpus
@@ -62,21 +62,21 @@ docker compose build pipeline
 ```bash
 # 1. Profile a new RFI. Mistral proposes a column→role mapping;
 #    you approve or reject. Writes config_rfi_<slug>.json on approval.
-docker compose run --rm pipeline python profile_excel.py data/your_file.xlsx
+docker compose run --rm cli python -m pipeline.profile data/your_file.xlsx
 
 # 2. Preview the chunks that ingestion would produce, for both
 #    chunking strategies. Read-only — does not write to ChromaDB.
-docker compose run --rm pipeline python review_rfi_chunks.py
+docker compose run --rm cli python -m pipeline.review_chunks
 
 # 3. Ingest into ChromaDB across all 4 collections. Resumable via
 #    a per-file checkpoint at outputs/.ingest_checkpoint.json.
-docker compose run --rm pipeline python ingest_rfi.py
+docker compose run --rm cli python -m pipeline.ingest
 ```
 
 ### Workflow 2 — Query the corpus
 
 ```bash
-docker compose run --rm pipeline python query_rfi.py \
+docker compose run --rm cli python -m pipeline.query \
   "What is your approach to GDPR compliance?" \
   --collection rfi_separated_cosine \
   --retrieval hybrid \
@@ -99,7 +99,7 @@ Available flags:
 ### Run the eval
 
 ```bash
-docker compose run --rm pipeline python eval_rfi.py
+docker compose run --rm cli python -m pipeline.evaluate
 ```
 
 Runs all 36 configurations (4 collections × 3 retrieval modes × 3
@@ -114,8 +114,8 @@ Quick smoke test: `--limit 2 --questions 2` runs only 2 configs ×
 
 **Note:** `outputs/eval_dataset.json` is gitignored — it contains
 client-identifying pair IDs. To run the eval on your own corpus,
-create this file with the schema shown in `eval_rfi.py`'s `--help`
-output.
+create this file with the schema shown in `pipeline.evaluate`'s
+`--help` output.
 
 ## Production recommendation
 
@@ -139,13 +139,13 @@ entry 13):
 ## Architecture
 
 ```
-Excel RFIs ──► profile_excel.py ──► config_rfi_*.json (human-approved)
+Excel RFIs ──► pipeline.profile ──► config_rfi_*.json (human-approved)
                                             │
-                                    ingest_rfi.py ──► ChromaDB (4 collections)
+                                    pipeline.ingest ──► ChromaDB (4 collections)
                                                               │
                              New question ────────────────────┘
                                                               │
-                                                    query_rfi.py
+                                                    pipeline.query
                                                (retrieve → rerank → generate)
                                                               │
                                                Answer + provenance + scores

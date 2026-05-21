@@ -1,11 +1,19 @@
 # docker-compose.yml — RAG pipeline
 # ----------------------------------
-# DECISION: ONE service, not two.
+# DECISION: ONE service for the CLI, named `cli` (not `pipeline`).
 #   ChromaDB runs as an embedded Python library (PersistentClient), not as
-#   a separate server. So there is no chromadb service — just `pipeline`,
+#   a separate server. So there is no chromadb service — just `cli`,
 #   with the vector store living in a mounted directory.
+#
+#   The service is deliberately NOT named `pipeline` to avoid collision
+#   with the Python package of the same name. `docker compose run --rm
+#   cli python -m pipeline.profile ...` reads as "use the cli service
+#   to run the pipeline.profile module" instead of "use the pipeline
+#   service to run the pipeline.profile module" (same word twice).
+#
+#   The UI layer adds two more services (backend, frontend) — see SPEC_UI.md.
 services:
-  pipeline:
+  cli:
     build: .
 
     # DECISION: bind-mount the whole project directory onto /app.
@@ -27,7 +35,7 @@ services:
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
 
     # DECISION: stdin_open + tty.
-    #   analyse.py and inspect.py pause for a human y/n approval. Without an
-    #   attached interactive terminal those input() prompts would hang or EOF.
+    #   pipeline.profile pauses for a human y/n approval. Without an
+    #   attached interactive terminal that input() prompt would hang or EOF.
     stdin_open: true
     tty: true

@@ -18,11 +18,15 @@ The repo has two layers, each with its own spec:
 
 The pipeline is feature-complete and the eval has landed a production
 recommendation (`rfi_separated_cosine` + semantic + crossencoder +
-top-k=3). The UI layer wraps the existing CLI scripts with a web app
-so non-technical staff can run both workflows (ingest + answer)
-without touching the CLI. **The pipeline scripts (`profile_excel.py`,
-`ingest_rfi.py`, `query_rfi.py`) stay unchanged — the UI wraps them
-as services. Don't edit them for UI reasons.**
+top-k=3). The UI layer wraps the existing pipeline package with a
+web app so non-technical staff can run both workflows (ingest +
+answer) without touching the CLI. **The pipeline modules
+(`pipeline.profile`, `pipeline.ingest`, `pipeline.query`,
+`pipeline.evaluate`) keep their existing behaviour — the UI wraps
+them by importing the functions, not by editing the modules. Don't
+change their behaviour for UI reasons.** (Organisational moves —
+renaming, splitting, restructuring — are fine and were done in
+commits 1–8 on `feat/ui`.)
 
 ---
 
@@ -64,23 +68,26 @@ history, refuse and surface the request to the user.
 
 ## How everything runs: Docker, not venv
 
-There is no Python virtual environment. Every script runs inside the
-`pipeline` container defined in [docker-compose.yml](docker-compose.yml):
+There is no Python virtual environment. Every pipeline module runs
+inside the `cli` container defined in [docker-compose.yml](docker-compose.yml):
 
 ```powershell
-docker compose run pipeline python <script>.py [args]
+docker compose run --rm cli python -m pipeline.<module> [args]
 ```
+
+(The service is named `cli`, not `pipeline`, to avoid colliding
+with the Python package of the same name.)
 
 The whole project directory is bind-mounted onto `/app`, so:
 - edits on the host take effect immediately (no rebuild)
-- state written by one script (`config_rfi_*.json`, `chroma_db/`,
+- state written by one run (`config_rfi_*.json`, `chroma_db/`,
   `outputs/`) survives the throwaway container and is visible to the next
 - `.env` is loaded automatically by Compose; `MISTRAL_API_KEY` is the
   only required variable
 
 To verify a Python import works, use:
 ```powershell
-docker compose run --rm pipeline python -c "from models import Row; print(Row)"
+docker compose run --rm cli python -c "from pipeline.models import Row; print(Row)"
 ```
 
 ---
