@@ -42,7 +42,7 @@ import re
 
 import pdfplumber
 
-from models import Paragraph
+from pipeline.models import Paragraph
 
 # Bullet glyphs commonly encountered in PDFs. Numbered lists ("1.", "1)")
 # and dash/asterisk lists are matched separately in the regex below.

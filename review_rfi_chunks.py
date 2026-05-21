@@ -71,7 +71,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.loaders import load_excel
-from models import Row
+from pipeline.models import Row
 
 
 # ─── Chunk builders (also called by ingest in Step 5) ──────────────────

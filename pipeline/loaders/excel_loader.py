@@ -105,7 +105,7 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
 
-from models import Row
+from pipeline.models import Row
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────

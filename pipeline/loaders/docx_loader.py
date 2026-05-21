@@ -28,7 +28,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.table import _Cell
 
-from models import Paragraph
+from pipeline.models import Paragraph
 
 
 def effective_size(para):

@@ -15,7 +15,7 @@ Downstream code writes `from models import Paragraph, Row` and does not
 reach into the submodules.
 """
 
-from models.paragraph import Paragraph
-from models.row import Row
+from pipeline.models.paragraph import Paragraph
+from pipeline.models.row import Row
 
 __all__ = ["Paragraph", "Row"]
