@@ -763,4 +763,93 @@ real answer. The eval framework's "hallucination refusal rate"
 and "retrieval gap rate" metrics exist specifically to measure
 this — and require the system to actually refuse when it should.
 
+## 11. Eval framework: separate the two refusal rates, reuse query — `eval_rfi.py`
+
+**Context.** Spec Step 7 is the experiment matrix. It runs the full
+36-configuration grid (4 collections × 3 retrieval modes × 3
+rerankers) against a 20-question ground-truth set and produces a
+comparison table sorted by retrieval quality + LLM-judge scores.
+Three decisions were the load-bearing ones.
+
+**Retrieval gap vs hallucination refusal are reported separately.**
+Both produce identical-looking refusal output ("I cannot find this
+in our corpus."). They mean opposite things:
+
+  - *Hallucination refusal* — system working correctly, the corpus
+    has no answer to an out-of-scope question.
+  - *Retrieval gap* — system FAILING, the corpus does contain a
+    correct answer but the pipeline didn't surface it.
+
+If the eval averaged them into a single "refusal rate", a high
+score would be ambiguous: is the system being conservatively
+honest, or silently broken? Spec Decision 6 calls this out
+explicitly. The eval splits by the `scope` field of each test
+question — in-scope refusals contribute to `retrieval_gap_rate`,
+out-of-scope refusals contribute to `hallucination_refusal_rate`,
+and the two ratios appear as separate columns in the comparison
+table.
+
+A high `retrieval_gap_rate` flags a retrieval bug. A LOW
+`hallucination_refusal_rate` flags a generator that's confabulating
+answers — both are first-class signals.
+
+**Reuse query_rfi.py's functions verbatim.** The eval imports
+`retrieve_semantic`, `retrieve_bm25`, `retrieve_hybrid`,
+`rerank_none`, `rerank_crossencoder`, `rerank_llm`,
+`fetch_paired_answers`, and `generate_answer` from query_rfi. The
+eval IS the query system on a benchmark. If the query module's
+behaviour changes (e.g. the role filter for separated collections
+that was added during query_rfi testing), the eval automatically
+sees that change. No second implementation can drift out of sync
+with the first. This is the same shared-builder pattern that the
+chunk reviewer applied to chunk construction (entry 8), applied
+here to the retrieval + generation path.
+
+**The LLM judge is skipped on refusals.** A refusal text would
+trivially score faithfulness=5 ("faithful to the empty context")
+but relevance=1 ("doesn't answer the question"). Including
+refusals in the judge's averages would muddy both metrics and
+give a misleading picture of when the answer-generation step is
+producing useful content. The eval reports judge scores over the
+*in-scope, non-refused* subset only; the refusal counts are
+reported as their own rates. The judge runs on the subset of
+questions where there's actually an answer to score.
+
+**Checkpoint granularity = one full configuration.** Each
+configuration is one (collection, retrieval, rerank) triple
+running all 20 questions — about 30-60 API calls of work. The
+checkpoint saves after every configuration completes. Finer
+granularity (per-question) would bloat the checkpoint and
+complicate aggregate computation; coarser granularity
+(per-collection or per-strategy) would risk losing 9+
+configurations to a single failure. One config is the natural
+unit of resumable work, the same way one file was the natural
+unit for ingest (entry 9).
+
+**The dataset is not committed to git.** `outputs/eval_dataset.json`
+contains 17 in-scope questions whose `expected_pair_id` fields
+include the slugified filenames of the source RFIs — which
+contain client names ("Utiq_Publicis", "The Guardian", "Reach").
+Same privacy boundary that keeps `config_rfi_*.json` gitignored.
+The dataset is reproducible: the script that produces it
+(currently a manual draft) can be re-run; a new owner of the
+repo authors their own dataset against their own corpus.
+
+**What it teaches.** When two metrics produce identical *output*
+but mean opposite things, the eval is the only place to keep
+them distinct — code doesn't care which kind of refusal it just
+emitted, but the human looking at the comparison table does. The
+asymmetry of "in-scope vs out-of-scope expectations" has to be
+encoded in the test data itself (scope tags), not derived from
+behaviour. A naive eval would collapse both into a single
+"refusal rate" and the comparison table would be telling you
+nothing actionable.
+
+The reuse pattern earns its keep here for the second time. The
+chunk reviewer (entry 8) imports the chunk builders from
+itself. The eval (this entry) imports retrieval + generation
+from query_rfi. Both cases: *the script doing the human-facing
+work and the script measuring quality run identical code*. There
+is no "production path vs measurement path" drift to debug.
+
 <!-- Next entry goes here -->
