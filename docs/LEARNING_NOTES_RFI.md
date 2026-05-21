@@ -1430,3 +1430,123 @@ Two things that will pay off across the rest of the UI build:
    re-arguing what should have been settled at scaffold time.
 
 
+## 17. UI Step 2 — Ingest router upload + profile SSE
+
+**SPEC_UI Step 2 deliverable.** First real workflow code in the
+UI. `POST /api/ingest/upload` saves the Excel under
+`tmp/{session_id}/upload.xlsx` and returns a row-count estimate.
+`GET /api/ingest/profile` streams the profiler as Server-Sent
+Events. The profile service wraps `pipeline.profile.*` as an
+async generator. This is the first time the import-not-subprocess
+rule (entry 16) actually carries load.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Every blocking pipeline call goes through `asyncio.to_thread`.*
+`pipeline.profile.*` is synchronous: openpyxl I/O plus a Mistral
+HTTP round-trip. Calling those directly inside an `async def`
+endpoint would block the FastAPI event loop and pause every other
+in-flight request for the duration. `asyncio.to_thread` schedules
+the synchronous work on the default thread executor; the event
+loop stays responsive and concurrent sessions remain isolated.
+The pipeline modules themselves do not need to be rewritten as
+async — that would be a deep refactor of working code for a
+performance characteristic that thread offloading gives us
+cheaply. The price is one extra import (`asyncio`) and a thin
+`_to_thread` helper.
+
+*The profile flow is broken into discrete `step` events fired
+AFTER each phase completes, not before.* A "starting phase X"
+event tells the user what is about to happen but cannot report
+what actually came out of it. A "completed phase X with result Y"
+event reports actionable information — "Sheet selected: Sheet1
+(highest question-mark count, 4 cells)". The narrative emerges
+from real boundaries (sheet picked, header detected, columns
+profiled, LLM responded, validated) instead of cosmetic
+progress messages. One exception: the Mistral call is announced
+beforehand ("Calling Mistral...") because it is the longest wait
+in the flow and silence there would feel like a stall.
+
+*The proposal is persisted to `profile.json` BEFORE the proposal
+event is yielded.* If the SSE connection drops between yield and
+the user clicking Approve, the proposal still survives on disk
+and the next Step-3 POST can read it. Yielding first and writing
+after would create a window where the user sees the proposal but
+the backend has no record of it. Filesystem-first is the cheap
+side of the race — and it composes with the "filesystem is the
+state store" decision from entry 16.
+
+*Uploads always land at the fixed filename `upload.xlsx`, not the
+original name.* Three reasons: (1) the session directory is the
+only state location, so the profiler service does not need to be
+told which file in the directory to open; (2) each session holds
+one workflow, so re-uploading replaces; (3) original filenames
+carry client names ("Utiq_Publicis RFI.xlsx") that we would
+rather not surface in any future filesystem listing leaked
+through an error message. The original filename is still
+returned in the upload response so the frontend can display it
+back to the user — we just don't use it on disk.
+
+*Exceptions inside the SSE generator become typed error events,
+not bubbled exceptions.* An exception thrown inside an async
+generator that backs a `StreamingResponse` becomes an opaque 500
+on the wire — the SSE client sees the stream close with no
+useful message. A catch-all that yields
+`{"type": "error", "data": ...}` preserves the per-event protocol
+all the way to the browser, where the frontend can render
+something meaningful. The catch is at the outermost level of the
+generator; specific failures (validation issues, missing upload
+file) yield more structured error events earlier.
+
+*Validation failures terminate the stream, do not stream the
+proposal.* `pipeline.profile.validate_proposal` returns a list of
+issues; if non-empty, the LLM produced an invalid mapping (two
+columns labelled `question`, an invalid metadata role name, etc.).
+The SSE service yields a single error event with `issues: [...]`
+and returns, rather than yielding the malformed proposal. The
+human approval flow in Step 3 should never see a proposal the
+validator rejected — that asymmetry is what makes the validator
+load-bearing rather than ceremonial (entry 4).
+
+**Verification.** Workflow ran end-to-end against
+`data/Utiq_Publicis RFI.xlsx`:
+
+  POST /api/sessions                    -> {"session_id": "<uuid>"}
+  POST /api/ingest/upload?session_id=.. -> {"detected_rows": 60, ...}
+  GET  /api/ingest/profile?session_id=  -> 8 streamed events:
+       step "File opened — 1 sheet(s) detected"
+       step "Sheet selected: \"Sheet1\" — highest question-mark count"
+       step "Header row: 12 — row 12 contains header label 'UTIQ response'"
+       step "Columns profiled: 3 columns, 48 data rows"
+       step "Calling Mistral for column→role mapping..."
+       step "LLM recommendation received"
+       step "Proposal validated"
+       proposal {B=question, C=answer, A=ignore, reasoning=...}
+       done
+
+`tmp/{sid}/upload.xlsx` matched the source byte-for-byte (24 928
+bytes). `tmp/{sid}/profile.json` was written (1 473 bytes) with
+the full mapping payload.
+
+**What it teaches.**
+
+The pipeline restructure (entry 15) is what made this Step easy.
+If the pipeline still lived as flat scripts at root, the
+profiler service would have had to either subprocess-shell out
+to `python -m pipeline.profile` (parsing stdout for events) or
+copy-paste the profiler's Phase 1/2/3 functions into the service
+file. Both are bad — the first is fragile and slow, the second
+double-maintains business logic. Because the restructure
+guaranteed that `pipeline.profile.auto_detect_header_row` etc.
+are importable without side effects, the service is a thin
+async wrapper that adds nothing but the SSE event shape and the
+thread-offload.
+
+Net effect: the api/services/profiler.py file is ~50 lines of
+real logic plus comments. That is the right size for a wrapper.
+If it were 500 lines, that would be a signal the pipeline
+boundary was drawn in the wrong place — and the restructure
+would have been wasted. The fact that it isn't is the test that
+the pipeline package was carved at the right joint.
+
+
