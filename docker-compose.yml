@@ -1,0 +1,33 @@
+# docker-compose.yml — RAG pipeline
+# ----------------------------------
+# DECISION: ONE service, not two.
+#   ChromaDB runs as an embedded Python library (PersistentClient), not as
+#   a separate server. So there is no chromadb service — just `pipeline`,
+#   with the vector store living in a mounted directory.
+services:
+  pipeline:
+    build: .
+
+    # DECISION: bind-mount the whole project directory onto /app.
+    #   The container works directly on the host's files, so:
+    #     - state written by one script (config.json, chroma_db/, outputs/)
+    #       survives the throwaway `docker compose run` container and is
+    #       visible to the next script in the pipeline;
+    #     - editing a .py file on Windows takes effect immediately — no
+    #       `docker compose build` between code changes.
+    #   The image (Dockerfile COPY) still gives a self-contained build for
+    #   deployment; in development this mount simply shadows it with live
+    #   source. One mount covers chroma_db/, data/ and outputs/ — they are
+    #   all subdirectories of the project root.
+    volumes:
+      - .:/app
+
+    # Compose auto-reads .env in the project root; ${VAR} expands from it.
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+
+    # DECISION: stdin_open + tty.
+    #   analyse.py and inspect.py pause for a human y/n approval. Without an
+    #   attached interactive terminal those input() prompts would hang or EOF.
+    stdin_open: true
+    tty: true

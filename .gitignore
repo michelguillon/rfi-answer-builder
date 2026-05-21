@@ -1,0 +1,65 @@
+# =========================================================================
+# RFI Answer Builder — .gitignore
+# =========================================================================
+# Load-bearing for proprietary data containment. This file is committed
+# BEFORE any other file in the repo, so nothing sensitive can slip in
+# before the rules are in place.
+
+# --- Proprietary RFI data (the reason this repo is private) -------------
+# Real RFI spreadsheets / source docs from clients. Never committed.
+#
+# Broad rule (not just rfi_*.xlsx) because client-supplied filenames
+# carry client names, dates, and internal codes — they will NOT match a
+# tidy naming convention (e.g. "Utiq_Publicis RFI.xlsx", "INTERNAL -
+# Reach Customer facing DPIA questions.xlsx"). Ignore every spreadsheet
+# and source document in data/ by default; the fake demo file is the
+# only exception.
+data/*.xlsx
+data/*.xls
+data/*.csv
+data/*.pdf
+data/*.docx
+# The fake sample (created later for safe demos) is the only exception.
+!data/sample_rfi.xlsx
+
+# --- Experiment outputs (may contain real RFI content) -------------------
+# Validation runs, eval results, retrieval traces — all can incidentally
+# capture proprietary question/answer text.
+outputs/
+
+# --- Per-file configs ----------------------------------------------------
+# config_rfi_*.json holds column mappings + client/date metadata extracted
+# at profile time. Client/date strings are sensitive; ignore them all.
+# A sanitised sample config can be committed by name if needed later.
+config_rfi_*.json
+
+# --- Secrets -------------------------------------------------------------
+# Mistral API key lives here. NEVER commit.
+.env
+.env.*
+*.key
+# The template (no real key) IS committed so a fresh clone knows what to set.
+!.env.example
+
+# --- Vector store (large, machine-specific, regenerable) -----------------
+# ChromaDB persists here; ingest.py rebuilds it. May contain embedded
+# proprietary chunk text — extra reason not to commit.
+chroma_db/
+*.sqlite3
+
+# --- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# --- Claude Code local settings (machine-specific) ----------------------
+.claude/settings.local.json
+
+# --- OS / editor noise ---------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
