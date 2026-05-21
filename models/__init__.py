@@ -1,9 +1,21 @@
-"""models — shared data models for the RAG pipeline.
+"""models — shared data models for the RFI pipeline.
 
-Exports the common paragraph model so downstream code can write
-`from models import Paragraph` without reaching into the submodule.
+Two models live here, deliberately separate:
+
+  - `Paragraph` — prose documents (docx, pdf). Carries formatting
+    signals (style, size, bold, list status, table membership) used by
+    the chunker to discriminate headings from body text from list items.
+
+  - `Row` — Q&A rows from Excel RFIs. Carries question/answer/context
+    plus a per-file metadata dict. The structural vocabulary is "columns",
+    not "formatting", so it is a separate model rather than a contorted
+    Paragraph. See models/row.py and docs/LEARNING_NOTES_RFI.md, entry 1.
+
+Downstream code writes `from models import Paragraph, Row` and does not
+reach into the submodules.
 """
 
 from models.paragraph import Paragraph
+from models.row import Row
 
-__all__ = ["Paragraph"]
+__all__ = ["Paragraph", "Row"]
