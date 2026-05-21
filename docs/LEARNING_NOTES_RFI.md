@@ -1107,3 +1107,92 @@ be actionable.
   better rubric, the comparison table gains additional ranking
   signal and the per-config differences sharpen.
 
+## 14. Cross-client name leakage in generated answers — known issue, deferred fix
+
+**Context.** During hand-verification of the CPO questions, the Q2
+answer ("What measures do you have in place to ensure data security
+and user privacy?") contained the sentence: *"The agreement to be
+concluded between Utiq and Reach addresses the engagement of
+processors."* — where "Reach" is a past client whose RFI is in the
+corpus. The current question wasn't from Reach. The generator
+faithfully copied a past Q&A pair into its synthesis, and the past
+Q&A pair named the past client verbatim.
+
+This is a real safety/privacy issue. Surfacing one client's name in
+a response drafted for a different client is, depending on context:
+- a confidentiality concern (does Reach want it known they ran a
+  DPIA with this vendor?),
+- a professionalism concern (it reads as a paste from another
+  proposal),
+- a basic awkwardness ("we work with Reach" delivered to a client
+  who is not Reach).
+
+**Why the eval missed it.** The LLM judge scored that exact answer
+at faithfulness=5.0 because it WAS faithful to the retrieved
+context — the cross-client name came directly from the past Q&A
+pair the judge was comparing against. From the judge's defined
+criteria (faithfulness, relevance, completeness) the answer is
+correct. The leakage isn't in any of those dimensions.
+
+This is the meta-lesson: a metric measures what its definition
+says, and nothing more. Faithfulness-to-context cannot catch a
+problem that is *in* the context. The eval framework is sound
+inside its scope; the scope just doesn't include cross-tenant
+content sanitisation. The hand-verification path (entry 12)
+catches it.
+
+**Design options for the eventual fix.** Not implemented today;
+recording for whoever picks this up.
+
+- *Prompt-level guard.* Add to the generation system prompt:
+  "The retrieved Q&A pairs come from past clients. Do not name
+  any specific client in your response. If you need to reference
+  one, write 'a similar client' or omit the reference." Cheap to
+  try, mostly effective for compliant LLMs, but trust-but-verify.
+- *Post-generation redaction.* After Mistral produces the answer,
+  run a regex / NER pass over it that replaces any known
+  past-client name (we have these in `config_rfi_*.json` already
+  — every config's `client` field) with `[a past client]` or
+  similar. Deterministic, auditable.
+- *Ingest-time sanitisation.* Replace client names in the
+  ANSWER text before embedding. Cleanest semantically (the
+  vector store never holds the leakable text), most invasive
+  (loses original phrasing if you ever need to show the raw
+  chunk to a human). Probably wrong choice — the verbose
+  provenance display we built explicitly wants to show the raw
+  past Q&A text.
+
+The likely production answer is the first two combined:
+prompt-level guard for the common case, regex/NER post-pass for
+defence-in-depth.
+
+**Also worth implementing alongside:** a `--client X` flag on
+`query_rfi.py` that the user specifies (e.g. `--client "BBC"`).
+The generator's prompt then explicitly includes "you are drafting
+for BBC; do not name other clients" — making the redaction
+target-aware rather than generic.
+
+**What it teaches.**
+
+When building a RAG system over a *private, multi-tenant corpus*,
+cross-tenant content leakage is a first-class safety concern that
+needs its own design + eval. Automated metrics scoped to
+faithfulness/relevance/completeness will not catch it — they're
+optimising for the wrong thing. Hand-verification by a domain
+expert catches it because the domain expert reads the answer
+with an implicit "would I be embarrassed to send this?" check.
+The lesson is to encode that check explicitly: either as a
+generation-prompt constraint, a post-processing pass, or both,
+AND to add an eval metric ("answer mentions a non-target client
+name: yes/no") that the formal eval can score on every config.
+
+Spec Decision 7 mentioned tenant isolation in passing as a
+"metadata filtering" pattern — filter the retrieval to a tenant's
+own chunks. That's the right primitive for the *retrieval* side
+(only retrieve your own past answers when querying for yourself).
+But this RFI use case is the opposite: retrieve across all past
+answers to learn from them, then generate a fresh answer for a
+new client. The tenant boundary moves from retrieval to
+generation. Both deserve eval coverage.
+
+
