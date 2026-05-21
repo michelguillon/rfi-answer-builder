@@ -17,3 +17,13 @@ rank_bm25>=0.2.2
 # crossencoder is the production-realistic reranker — runs locally, no
 # API cost per query, ~50ms per (query, chunk) pair.
 sentence-transformers>=3.0.0
+# UI backend (SPEC_UI.md). FastAPI wraps the pipeline package as a
+# web service; uvicorn[standard] pulls in httptools + uvloop for the
+# performance defaults plus the WatchFiles reload hook used by
+# --reload in dev. python-multipart is required by FastAPI to parse
+# the multipart/form-data uploads the ingest + answer workflows use
+# from Step 2 onwards (stubs in Step 1 don't need it yet, but adding
+# it now avoids a "works on stubs, breaks on uploads" surprise).
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9

@@ -39,3 +39,25 @@ services:
     #   attached interactive terminal that input() prompt would hang or EOF.
     stdin_open: true
     tty: true
+
+  # ARCHITECTURAL DECISION: backend is a separate compose service, not a
+  # second command on `cli`. The two share an image (same Dockerfile)
+  # but want different runtime ergonomics: cli is interactive and
+  # short-lived, backend is long-running on a port. Keeping them as
+  # separate services means `docker compose up backend` does the right
+  # thing for the UI while `docker compose run --rm cli` stays
+  # unchanged for CLI work.
+  #
+  # The bind-mount of the whole project directory is reused so:
+  #   - uvicorn's --reload sees code edits immediately (no rebuild);
+  #   - tmp/, chroma_db/, data/, outputs/ are all shared with cli runs;
+  #   - .env is picked up by Compose the same way.
+  backend:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+    ports:
+      - "8000:8000"

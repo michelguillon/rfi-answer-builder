@@ -1332,3 +1332,101 @@ test confirmed identical CLI surface, and the eval framework
 would produce identical numbers if rerun against the same
 ChromaDB collections.
 
+
+## 16. UI Step 1 — FastAPI backend scaffold + session management
+
+**SPEC_UI Step 1 deliverable.** Stand up `api/` with FastAPI,
+stub the three workflow routers (sessions / ingest / answer),
+implement `api/session.py` (create, get-or-404, TTL cleanup),
+add `backend` as a second Docker Compose service, and write
+`api/CLAUDE.md` to capture the backend conventions. No real
+behaviour yet — Steps 2–5 fill in the routers.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Lifespan context manager, not `@app.on_event`.* FastAPI deprecated
+the `@app.on_event("startup")` pattern in 0.93. The lifespan
+asynccontextmanager keeps startup + shutdown in one place and is
+what FastAPI will still support five versions from now. The
+SPEC_UI snippet showed the older form; modernised here without
+changing the contract.
+
+*Filesystem-backed sessions, not a database.* A single-purpose
+internal tool with predictable per-session state does not need
+the durability, query, or migration story a database provides.
+A `tmp/{uuid}/` directory per session is auditable (one
+inspectable folder per workflow), debuggable (`ls` shows what was
+written), migration-free, and operationally cheap to clean
+(delete the tree). Multi-user concurrency is trivially safe
+because no two sessions share a file.
+
+*Startup-only TTL sweep, not a midnight timer.* The spec proposed
+"on startup AND at midnight" — the second half implies an asyncio
+background task. Dropped in favour of startup-only because an
+internal tool typically restarts daily anyway, getting the same
+effect for zero infrastructure cost. If sessions ever accumulate
+in practice, promote this to a background task; until evidence
+of need, the simpler shape wins. The TTL is 24 hours: generous
+for "user walked away, came back tomorrow" without indefinitely
+holding uploaded RFIs that may contain real client data.
+
+*Backend is a separate Docker Compose service, not a second
+command on `cli`.* They share the image (same Dockerfile) but
+want different runtime ergonomics: `cli` is interactive and
+short-lived for one-off pipeline invocations, `backend` is
+long-running on port 8000 with `uvicorn --reload`. Keeping them
+as separate services means `docker compose up backend` does the
+right thing for the UI while `docker compose run --rm cli` stays
+unchanged for CLI work. Both bind-mount the whole project
+directory, so file edits on the host propagate to both.
+
+*The session_id is a capability token, not an auth token.*
+Documented prominently in `api/CLAUDE.md`. UUID4 is unguessable
+enough to disambiguate concurrent users behind an existing
+reverse proxy / SSO layer, but it does not authenticate anyone
+or grant access to corpus data. The intended deployment puts
+real auth in front; sessions are infrastructure-free
+per-tab state isolation, not security. Mixing these would invite
+the wrong threat model.
+
+*Import pipeline functions, never subprocess-shell them.* This
+is the load-bearing reason the restructure (entry 15) happened
+when it did. The api/CLAUDE.md spells out both sides of the
+contract: backend services do
+`from pipeline.profile import <fn>`; the pipeline modules
+guarantee module-level side-effect freedom (no argparse at
+import time, no chromadb client at module scope). Subprocess
+output parsing would be fragile and would re-pay the cold-start
+cost of importing chromadb + sentence-transformers on every call.
+
+**Verification.** `docker compose up backend` starts uvicorn
+on :8000. `GET /healthz` returns `{"ok": true}`.
+`GET /api/sessions`, `GET /api/ingest`, `GET /api/answer` each
+return their `{"status": "stub"}` placeholder.
+`POST /api/sessions` returns a stub too. Cleanup logging
+appears in the startup output. (Real session creation +
+file upload arrive in Step 2.)
+
+**What it teaches.**
+
+Two things that will pay off across the rest of the UI build:
+
+1. *Pick the modern FastAPI surface now, even when the spec
+   shows the older one.* Lifespan over `on_event`; SSE via
+   `StreamingResponse` with explicit `X-Accel-Buffering: no`;
+   typed Pydantic responses where applicable; async route
+   handlers throughout. The spec is a contract for *what*; the
+   framework's current best practice is the contract for *how*.
+
+2. *Co-locate layer conventions with layer code on day one.*
+   `api/CLAUDE.md` exists from the first commit of the api/
+   directory, capturing the "import not subprocess" rule, the
+   SSE event format, the session-is-not-an-auth-token warning,
+   and the cross-tenant leakage handling requirement. Putting
+   these in a per-layer CLAUDE.md before any business logic
+   exists means every future api/ change loads them
+   automatically. Doing it later — once five service files
+   already exist — means relocating sticky guidance and
+   re-arguing what should have been settled at scaffold time.
+
+
