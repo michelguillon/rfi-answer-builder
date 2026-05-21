@@ -5,6 +5,21 @@ the spec for whichever layer you are working on (see "Current state"
 below). The spec for each layer is the single source of truth; this
 file captures the conventions that apply across both layers.
 
+**Layer-specific conventions** live next to the code they govern
+and Claude Code loads them automatically when you work in those
+subtrees:
+
+- [pipeline/CLAUDE.md](pipeline/CLAUDE.md) — CLI + import contract,
+  Excel/openpyxl rules, checkpoint discipline, "files copied
+  unchanged" list.
+- `api/CLAUDE.md` — added when the FastAPI scaffold lands (SPEC_UI
+  Step 1). Will cover SSE event format, session.py contract, the
+  "import not subprocess" rule for wrapping pipeline functions.
+- `frontend/CLAUDE.md` — added when the React scaffold lands
+  (SPEC_UI Step 6). Will cover shadcn-first component rules, the
+  `useSSE` hook contract, and the mandatory provenance + cross-tenant
+  leakage handling in answer cards.
+
 ---
 
 ## Current state
@@ -98,9 +113,10 @@ docker compose run --rm cli python -c "from pipeline.models import Row; print(Ro
   `from mistralai import Mistral` — the v2 SDK exposes the client under
   `mistralai.client`.
 - **Every API call goes through `call_with_retry()`** from
-  [mistral_helpers.py](mistral_helpers.py). It handles 429 + 5xx with
-  exponential backoff and honours `Retry-After` headers. 400 / 401 / 404
-  are bugs on our side and raise immediately.
+  [pipeline/mistral_helpers.py](pipeline/mistral_helpers.py). It
+  handles 429 + 5xx with exponential backoff and honours
+  `Retry-After` headers. 400 / 401 / 404 are bugs on our side and
+  raise immediately.
 - **Embedding model is fixed:** `mistral-embed`, 1024 dimensions,
   L2-normalised. Same model for documents and queries. Changing it means
   a full re-index of every collection.
@@ -171,9 +187,10 @@ After each step:
 4. Stop and confirm with the user before starting the next step.
 
 **Branch discipline.** Pipeline work landed directly on `main`
-(commits 35af1cf .. 338c9d3). UI work goes on a feature branch off
-main (e.g. `feat/ui`) — don't push to main directly. Merge to main
-when the UI's Definition of Done is met.
+(commits 35af1cf .. 338c9d3). The UI phase — including the
+pre-UI restructure — is happening on `feat/ui`. Don't push to
+main directly. Merge to main when the UI's Definition of Done is
+met and the restructure is stable.
 
 ---
 
@@ -195,23 +212,6 @@ retrieval/generation path:
   — e.g. flag answers that mention a client name other than the
   current target client. Don't ship a "send directly to client" path
   that bypasses human review.
-
----
-
-## Files copied unchanged from a sibling learning project
-
-These are reused as-is and should not be modified casually:
-- [loaders/docx_loader.py](loaders/docx_loader.py)
-- [loaders/pdf_loader.py](loaders/pdf_loader.py)
-- [loaders/__init__.py](loaders/__init__.py) (will gain an Excel dispatch entry)
-- [models/paragraph.py](models/paragraph.py)
-- [models/__init__.py](models/__init__.py) (will gain a `Row` export)
-- [mistral_helpers.py](mistral_helpers.py)
-- [Dockerfile](Dockerfile), [docker-compose.yml](docker-compose.yml),
-  [requirements.txt](requirements.txt), [.env.example](.env.example)
-
-If any of these need to change for RFI-specific reasons, treat it as a
-deliberate architectural decision and document it in the learning notes.
 
 ---
 
