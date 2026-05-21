@@ -88,7 +88,7 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-from mistral_helpers import call_with_retry, get_client
+from pipeline.mistral_helpers import call_with_retry, get_client
 
 
 # ─── Constants ──────────────────────────────────────────────────────────

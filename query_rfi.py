@@ -90,7 +90,7 @@ from typing import Any
 import chromadb
 from rank_bm25 import BM25Okapi
 
-from mistral_helpers import call_with_retry, get_client
+from pipeline.mistral_helpers import call_with_retry, get_client
 
 
 # ─── Configuration ──────────────────────────────────────────────────────

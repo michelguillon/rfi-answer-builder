@@ -78,7 +78,7 @@ from typing import Any
 
 import chromadb
 
-from mistral_helpers import call_with_retry, get_client
+from pipeline.mistral_helpers import call_with_retry, get_client
 from query_rfi import (
     DEFAULT_POOL_SIZE,
     DEFAULT_TOP_K,
