@@ -87,7 +87,7 @@ from typing import Any
 
 import chromadb
 
-from loaders import load_excel
+from pipeline.loaders import load_excel
 from pipeline.mistral_helpers import call_with_retry, get_client
 from review_rfi_chunks import build_combined_chunks, build_separated_chunks
 

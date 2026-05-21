@@ -28,9 +28,9 @@ for (extension → loader, single input).
 
 from pathlib import Path
 
-from loaders.docx_loader import load_docx
-from loaders.excel_loader import load_excel
-from loaders.pdf_loader import load_pdf
+from pipeline.loaders.docx_loader import load_docx
+from pipeline.loaders.excel_loader import load_excel
+from pipeline.loaders.pdf_loader import load_pdf
 
 # Dispatch table — for prose loaders only. Excel is excluded because
 # it has a different signature (see the load_excel export below).

@@ -70,7 +70,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from loaders import load_excel
+from pipeline.loaders import load_excel
 from models import Row
 
 
