@@ -696,6 +696,7 @@ def build_config(
     proposal: MappingProposal,
     sheet: SheetProfile,
     source_path: Path,
+    header_row: int,
 ) -> dict:
     """Convert the validated proposal into the on-disk config format
     described in the spec (Decision 2).
@@ -734,9 +735,19 @@ def build_config(
             metadata_fields.append(role)
     columns["ignore"] = ignored
 
+    # header_row is load-bearing for the loader: it determines which
+    # spreadsheet row contains the column labels, and therefore which
+    # row is the first data row (header_row + 1). Form-style RFIs have
+    # header_row > 1 (e.g. 12 for Utiq_Publicis RFI). Without this
+    # field the loader would default to 1 and silently misread the
+    # file as starting at row 2 — answer cells loaded as questions,
+    # preamble rows loaded as Q&A. Recording it in the config means
+    # the loader does not re-run the discovery heuristic and the
+    # mapping is reproducible.
     return {
         "source_file": source_path.name,
         "sheet": proposal.sheet,
+        "header_row": header_row,
         "columns": columns,
         "metadata_fields": metadata_fields,
         "client": proposal.client,
@@ -868,7 +879,8 @@ def main(argv: list[str] | None = None) -> int:
 
     slug = slugify_for_config(source_path)
     config_path = Path(f"config_rfi_{slug}.json")
-    config = build_config(proposal, sheet_profile, source_path)
+    config = build_config(proposal, sheet_profile, source_path,
+                          header_row=header_row)
     write_config(config, config_path)
     return 0
 

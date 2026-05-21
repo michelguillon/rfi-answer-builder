@@ -298,4 +298,90 @@ label-match is lossless and `?`-density is lossy. Picking the
 right ordering is the difference between a robust heuristic and one
 that regresses on a previously-working file.
 
+## 6. Excel loader: persist discovery output, detect section markers — `loaders/excel_loader.py`
+
+**Context.** Step 2's profiler discovers per-file structure (sheet,
+header row, column-to-role mapping, client/date). Step 3's loader
+materialises that mapping into `Row` dataclasses for the chunker.
+The first question is what the loader knows vs. what it asks the
+profiler to have decided ahead of time.
+
+**Persist discovery output, do not re-discover.** The config schema
+gained a `header_row` field at the same time the loader was written.
+The reason: header_row is now load-bearing — form-style RFIs have
+header_row > 1, and a loader that defaults to row 1 silently mis-reads
+those files (header cells loaded as Q&A, preamble loaded as data).
+Persisting header_row in the config means the loader doesn't re-run
+the profiler's auto-detect heuristic — discovery happens once at
+profile time, the human approves it, and the loader treats the
+config as ground truth. The loader's `_validate_config` raises a
+clear error if it finds an old config without header_row, telling
+the user to re-profile.
+
+This is the same pattern as the rest of the pipeline: discovery is
+expensive and human-validated; runtime is deterministic and config-
+driven. Loaders should never re-do work the profiler already did.
+
+**Section markers: detected, not enforced.** Running the loader on
+the four real files surfaced a pattern the profiler doesn't capture:
+"section divider" rows — short labels like `Audiences/Targeting`,
+`Campaign Management`, `Direct consent` sitting in the question
+column above the Q&A rows for that section, with the answer cell
+empty. Loading these as Q&A pairs would corrupt the corpus: a chunk
+whose text is just "Audiences/Targeting" has no semantic value and
+pollutes retrieval against any query.
+
+Diagnostic across the four real files (before section detection):
+
+| File | rows | short Qs (≤4 words, no '?') |
+|---|---|---|
+| Utiq_Publicis RFI | 28 | 10 |
+| Utiq_Publicis_2023 Futureproof | 169 | 46 |
+| INTERNAL Reach DPIA | 81 | 0 |
+| Guardian OpusVerify | 50 | 0 |
+
+The detector in `_is_section_marker` is intentionally conservative:
+question is 1–4 words AND not ending in `?` AND answer/context/all
+configured metadata cells are fully empty. Any signal of "this row
+carries content" (an answer, a category, anything) defeats the
+section-marker classification — the row falls through and gets
+loaded normally. Conservative because the cost of a false-negative
+(load a section marker as Q&A) is one polluted chunk; the cost of a
+false-positive (drop a real short Q&A pair) is silently losing
+training data. Picking the asymmetry that minimises the silent loss
+is the right call.
+
+When a section marker is detected, the value is captured into
+`current_section` state and propagated into `metadata['section']`
+of every subsequent loaded row until the next marker. If the file
+has an explicit `section` column (file 4 / Guardian — the LLM
+identified Column C as `section` in Phase 2 of profiling), that
+column's value lands in metadata first and the inferred section
+defers to it. Explicit data always wins.
+
+After section detection, the diagnostic re-ran:
+
+| File | rows (after) | sections discovered |
+|---|---|---|
+| Utiq_Publicis RFI | 22 (was 28) | 6 |
+| Utiq_Publicis_2023 Futureproof | 140 (was 169) | 10 |
+| INTERNAL Reach DPIA | 81 (unchanged — no markers) | 0 |
+| Guardian OpusVerify | 50 (unchanged) | 14 (from column) |
+
+35 polluting section-marker rows stripped across the corpus; every
+loaded row now carries a section attribute where one was inferable.
+
+**What it teaches.** Two related lessons. First: when discovery
+produces structured output that downstream stages depend on, persist
+that output rather than re-running the discovery. Re-discovery
+couples downstream behaviour to the discovery heuristic; persistence
+decouples them. Second: when a data-quality pattern appears in real
+data that the spec didn't anticipate, the *conservative* response is
+right. Section markers are real, they corrupt retrieval, and they
+must be handled — but the detector should be biased toward
+false-negatives (load too many) rather than false-positives (drop
+real data), because silent data loss is the harder failure to
+diagnose. Stupid heuristics that you can explain are better than
+clever heuristics you can't audit.
+
 <!-- Next entry goes here -->
