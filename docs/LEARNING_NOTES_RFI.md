@@ -1196,3 +1196,139 @@ new client. The tenant boundary moves from retrieval to
 generation. Both deserve eval coverage.
 
 
+## 15. Pre-UI restructure: pipeline scripts → `pipeline/` package + distributed CLAUDE.md
+
+**Context.** The pipeline shipped as six flat scripts at repo
+root: `profile_excel.py`, `review_rfi_chunks.py`, `ingest_rfi.py`,
+`query_rfi.py`, `eval_rfi.py`, plus the shared `mistral_helpers.py`
+and the `loaders/` + `models/` packages. That layout worked fine
+for the script-based pipeline. With the UI layer about to be added
+(FastAPI + React per SPEC_UI.md), three problems surfaced:
+
+1. **The api/services/ files want to import pipeline logic, not
+   subprocess-shell it.** Streaming SSE events from a subprocess
+   would mean parsing the child's stdout — fragile and tied to log
+   format. Importing the functions lets the FastAPI process hold
+   warm imports across requests and yield events directly.
+   Subprocess-shelling was also the only honest option while the
+   pipeline lived as root-level scripts, because *importing* a root
+   script triggers its module-level argparse + side effects.
+
+2. **The `pipeline` Docker Compose service name was about to
+   collide with a proposed `pipeline` Python package name.** The
+   double-pipeline (`docker compose run --rm pipeline python -m
+   pipeline.profile`) reads as the same word twice with no signal
+   about which one is the service and which the package.
+
+3. **A single root CLAUDE.md was about to grow UI-layer
+   conventions** (SSE event format, session.py contract, shadcn
+   rules, useSSE hook contract, cross-tenant leakage handling in
+   answer cards) that aren't relevant when working on pipeline
+   improvements — and vice versa. Claude Code loads nested
+   CLAUDE.md files automatically, so layer-specific guidance
+   belongs in the layer's own subtree.
+
+**What we did, in eleven commits on `feat/ui`.**
+
+Commits 1–8 moved pipeline code into a `pipeline/` package, one
+file per commit, each verified before the next:
+
+- `mistral_helpers.py` → `pipeline/mistral_helpers.py`
+- `loaders/` → `pipeline/loaders/`
+- `models/` → `pipeline/models/`
+- `profile_excel.py` → `pipeline/profile.py`
+- `review_rfi_chunks.py` → `pipeline/review_chunks.py`
+- `ingest_rfi.py` → `pipeline/ingest.py`
+- `query_rfi.py` → `pipeline/query.py`
+- `eval_rfi.py` → `pipeline/evaluate.py`
+
+The `_rfi` suffix dropped because the package name already carries
+the domain. `eval` became `evaluate` because `pipeline.eval` reads
+awkwardly given the primary meaning of `eval` in Python — same
+naming-trap rule that lives in root CLAUDE.md.
+
+Commit 9 renamed the Docker Compose service `pipeline` → `cli`
+and rewrote every invocation in the README + spec docs from
+`docker compose run --rm pipeline python <script>.py` to
+`docker compose run --rm cli python -m pipeline.<module>`. The
+`-m` form is what makes both contracts work: argparse stays
+intact for CLI users, and the module can still be imported by
+external code without triggering CLI behaviour (because the
+argparse calls live inside the `if __name__ == "__main__":` block).
+
+Commit 10 split CLAUDE.md. Root keeps cross-cutting conventions
+(privacy, Docker, Mistral SDK, ChromaDB, code style, naming
+traps, branch discipline, active memory). `pipeline/CLAUDE.md`
+captures the dual contract (CLI + importable), the "files copied
+unchanged from a sibling learning project" list (moved here with
+updated paths), Excel-specific conventions, and checkpoint
+discipline. `api/CLAUDE.md` and `frontend/CLAUDE.md` are
+deliberately deferred to the SPEC_UI steps that create those
+directories — empty placeholders would invite drift.
+
+**Alternatives rejected.**
+
+- *Keep scripts at root, import them by name from api/services.*
+  Possible — Python's CWD-on-sys.path means `from profile_excel
+  import propose_mapping` would have worked. Rejected for two
+  reasons: (a) the docker compose service / package name collision
+  still bites because the package would be implicit (the script
+  directory) rather than explicit (a named package), and (b) any
+  module-level side effect in a root script — a `print()`, a
+  `argparse.parse_args()` outside `__main__`, a `chromadb.PersistentClient(...)`
+  — would fire on import and break the SSE flow.
+
+- *Symlink the old script names to the new module paths.* Rejected
+  per the CLAUDE.md "no backwards-compatibility hacks" rule. The
+  only callers were the README and the spec docs; updating them is
+  one commit. A symlink would be permanent dead weight.
+
+- *Single root CLAUDE.md grown to cover both layers.* Rejected
+  because every Claude Code session would load both sets of
+  conventions regardless of which subtree it's working in.
+  Pipeline-only sessions don't want SSE rules; UI-only sessions
+  don't want the openpyxl `data_only=True` rule. Co-locating
+  guidance with code keeps each session focused.
+
+- *Make `pipeline/__init__.py` re-export every public function.*
+  Rejected. Each module has its own ergonomic CLI surface and its
+  own set of importable names — a flat `from pipeline import
+  profile_propose_mapping` re-export would either duplicate that
+  surface or hide it behind a leaky alias. Importers reach into
+  modules by name (`from pipeline.profile import <fn>`) which
+  keeps the public surface honest and forces module boundaries
+  to mean something.
+
+**What it teaches.**
+
+Two things, both about *timing*:
+
+1. **Restructure before the dependency, not after.** The
+   restructure cost ~30 minutes and 11 commits when nothing
+   depended on the old layout except docs. Doing it after the
+   FastAPI scaffold was already importing from root scripts
+   would have rippled through api/services/ tests, half-written
+   SSE handlers, and any frontend code that had baked in the old
+   shape. The right time to move files is before the next layer
+   touches them.
+
+2. **Distribute conventions before they collide.** A single
+   CLAUDE.md grew naturally during pipeline work because there
+   was only one layer; the conventions in it WERE the conventions
+   of the layer. Adding a second layer made the file fork
+   internally even before any UI code landed (notice the
+   "pipeline scripts stay unchanged" rule from the original root
+   CLAUDE.md — that's pipeline-specific guidance wedged into a
+   nominally cross-cutting file because there was nowhere else
+   for it to go). Splitting before the new layer arrives keeps
+   the layer-specific rules where they belong from day one,
+   rather than relocating them later when they've grown sticky.
+
+The restructure is **organisational only** — no pipeline behaviour
+changed. The production recommendation from entry 13
+(`rfi_separated_cosine` + semantic + crossencoder + top-k=3)
+remains valid against the renamed modules: every `--help` smoke
+test confirmed identical CLI surface, and the eval framework
+would produce identical numbers if rerun against the same
+ChromaDB collections.
+
