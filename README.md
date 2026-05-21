@@ -18,10 +18,21 @@ across a 36-configuration experiment matrix.
    optional reranking (crossencoder or LLM-as-reranker), and a
    refusal-guarded generation step that says
    *"I cannot find this in our corpus."* when the corpus is silent.
-4. **Evaluate** every retrieval × rerank × collection combination
-   against a ground-truth question set, with both retrieval metrics
-   (Recall@3, MRR) and LLM-as-judge answer scoring, and **separate**
-   reporting of hallucination-refusal-rate vs retrieval-gap-rate.
+4. **Evaluate** *(development/learning)* — runs every retrieval ×
+   rerank × collection combination against a ground-truth question
+   set, with both retrieval metrics (Recall@3, MRR) and LLM-as-judge
+   answer scoring, and **separate** reporting of
+   hallucination-refusal-rate vs retrieval-gap-rate.
+
+## Known limitations
+
+**Cross-client name leakage.** Generated answers may include past
+client names verbatim — the LLM faithfully copies them from source
+Q&A pairs. Treat generated answers as draft-for-review, not
+send-to-client. The fix path is documented in
+`docs/LEARNING_NOTES_RFI.md` entry 14. Until fixed, adding
+*"do not name specific clients"* to the generation system prompt
+is a partial mitigation.
 
 ## Status
 
@@ -92,9 +103,7 @@ docker compose run --rm pipeline python eval_rfi.py
 ```
 
 Runs all 36 configurations (4 collections × 3 retrieval modes × 3
-rerankers) against the ground-truth question set
-(`outputs/eval_dataset.json`, gitignored — author your own per
-corpus). Writes:
+rerankers) against the ground-truth question set. Writes:
 
 - `outputs/rfi_validation/eval_results.json` — full per-config rows
 - `outputs/rfi_validation/comparison.md` — sorted summary table
@@ -102,6 +111,11 @@ corpus). Writes:
 
 Quick smoke test: `--limit 2 --questions 2` runs only 2 configs ×
 2 questions.
+
+**Note:** `outputs/eval_dataset.json` is gitignored — it contains
+client-identifying pair IDs. To run the eval on your own corpus,
+create this file with the schema shown in `eval_rfi.py`'s `--help`
+output.
 
 ## Production recommendation
 
@@ -127,15 +141,14 @@ entry 13):
 ```
 Excel RFIs ──► profile_excel.py ──► config_rfi_*.json (human-approved)
                                             │
-                                            ▼
-                                   ingest_rfi.py ──► ChromaDB (4 collections)
-                                            │
-       New RFI question ─────────────────────┤
-                                            ▼
-                              query_rfi.py (retrieve → rerank → generate)
-                                            │
-                                            ▼
-                                  Answer + provenance + scores
+                                    ingest_rfi.py ──► ChromaDB (4 collections)
+                                                              │
+                             New question ────────────────────┘
+                                                              │
+                                                    query_rfi.py
+                                               (retrieve → rerank → generate)
+                                                              │
+                                               Answer + provenance + scores
 ```
 
 The 4 ChromaDB collections cover the experiment matrix:
@@ -170,12 +183,6 @@ The fake `data/sample_rfi.xlsx` is the only explicit exception. If
 the repo is ever made public (the UI's "Public repo preparation"
 plan in `docs/SPEC_UI.md` covers this), it should ship with sample
 data only.
-
-**Known unfixed issue worth noting:** generated answers may include
-past client names verbatim (the LLM faithfully copies them from the
-source corpus). Tracked in `LEARNING_NOTES_RFI.md` entry 14 with
-design options for the eventual fix. Until fixed, treat generated
-answers as draft-for-review, not send-to-client.
 
 ## Stack
 
