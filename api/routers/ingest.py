@@ -1,8 +1,8 @@
-"""api.routers.ingest — upload + profile (SSE) + approve (Step 3).
+"""api.routers.ingest — upload + profile (SSE) + approve (SSE).
 
   POST /api/ingest/upload?session_id=...     save Excel under tmp/{sid}/
   GET  /api/ingest/profile?session_id=...    SSE stream of profiler steps
-  POST /api/ingest/approve                   (Step 3, not yet implemented)
+  POST /api/ingest/approve                   SSE stream of ingest progress
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ import json
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import load_workbook
+from pydantic import BaseModel
 
+from api.services.ingester import ORIGINAL_NAME_FILENAME, run_ingest
 from api.services.profiler import UPLOAD_FILENAME, run_profile
 from api.session import get_session_dir
 
@@ -62,6 +64,18 @@ async def upload(
     contents = await file.read()
     upload_path.write_bytes(contents)
 
+    # ARCHITECTURAL DECISION: persist the original filename as a
+    # sidecar in the session directory. The ingester (Step 3) needs
+    # it later to write config_rfi_<slug>.json + copy upload.xlsx
+    # into data/<original_filename>.xlsx so a future CLI re-ingest
+    # works. The upload response already returns the filename to
+    # the client, but storing it server-side keeps the contract one-
+    # sided: the backend remembers, the frontend just kicks the
+    # workflow.
+    (session_dir / ORIGINAL_NAME_FILENAME).write_text(
+        file.filename, encoding="utf-8"
+    )
+
     detected_rows = await asyncio.to_thread(_estimate_rows, upload_path)
     return {
         "session_id": session_id,
@@ -106,6 +120,46 @@ async def profile(session_id: str = Query(...)) -> StreamingResponse:
 
     async def stream():
         async for event in run_profile(session_dir):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+# ARCHITECTURAL DECISION: approve POSTs an SSE response.
+#
+# The spec calls for the approve endpoint to BOTH commit the user's
+# config edits AND stream the ingest progress, so we return a
+# StreamingResponse directly from a POST handler. The browser's
+# native EventSource API only supports GET, so the frontend uses
+# the fetch + ReadableStream pattern (documented in api/CLAUDE.md
+# and the frontend SSE wrapper). This shape keeps the workflow at
+# one request rather than splitting into "POST commit + GET stream"
+# — fewer round trips and no risk of an interleaving race where
+# the GET begins before the commit lands.
+class ApproveBody(BaseModel):
+    """Body of POST /api/ingest/approve.
+
+    The frontend collects only client/date edits — column roles are
+    NOT editable in the UI (see SPEC_UI's Ingest wireframe). If
+    omitted, the inferred values from profile.json are kept.
+    """
+
+    session_id: str
+    client: str | None = None
+    date: str | None = None
+
+
+@router.post("/approve")
+async def approve(body: ApproveBody) -> StreamingResponse:
+    """Write the approved config and stream ingest progress."""
+    session_dir = get_session_dir(body.session_id)
+
+    async def stream():
+        async for event in run_ingest(session_dir, body.client, body.date):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(

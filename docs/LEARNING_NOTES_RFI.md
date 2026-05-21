@@ -1550,3 +1550,146 @@ would have been wasted. The fact that it isn't is the test that
 the pipeline package was carved at the right joint.
 
 
+## 18. UI Step 3 — Approve + ingest SSE
+
+**SPEC_UI Step 3 deliverable.** `POST /api/ingest/approve` reads
+the profile, applies the user's client/date edits, persists the
+config to both the session dir AND the durable repo-root
+location, copies the upload into `data/`, and streams ingest
+progress as Server-Sent Events. The ingester service composes
+existing `pipeline.ingest` helpers — only the per-batch yield
+loop is new.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Approve is a POST that returns an SSE stream, not a POST-then-GET
+split.* The spec calls for the approve endpoint to commit the
+config edits AND stream progress in one request. EventSource (the
+browser's native SSE client) only supports GET, so the frontend
+will use the `fetch` + `ReadableStream` pattern instead. The
+alternative — POST commits + GET streams — would mean two round
+trips and a race window where the GET could begin before the
+commit lands. One request keeps the contract atomic.
+
+*Two persisted copies of the config: session-local + repo-root.*
+The session gets `tmp/{sid}/config.json` because the session is
+the auditable record of one workflow (you can `ls` it and see
+upload → profile → config in one place). The repo root gets
+`config_rfi_<slug>.json` because the CLI ingest's
+`load_all_rows()` scans `glob("config_rfi_*.json")` — for a
+future `python -m pipeline.ingest --reset` to rebuild ChromaDB
+from disk, the durable config has to live where the CLI looks.
+Drift between the two would mean the CLI re-ingest produces
+different chunks than the UI just produced, so they are written
+from the same JSON string in one statement.
+
+*The Excel is COPIED into `data/<original_filename>`, not moved.*
+The session upload stays in `tmp/{sid}/upload.xlsx` until the
+TTL sweep. If the approve fails midway (Mistral 500, ChromaDB
+write timeout), the user can re-approve without re-uploading.
+Move-not-copy would have made the upload non-reusable.
+
+*Original filename is persisted as a sidecar at upload time, not
+passed back through approve.* `tmp/{sid}/original_filename` is
+written by `POST /api/ingest/upload` and read by the ingester.
+The frontend never has to carry that string across the
+upload → profile → approve sequence. This is the
+"backend remembers, frontend kicks the workflow" pattern from
+api/CLAUDE.md: state lives on disk between requests, not in the
+client. Bonus: the same filename ends up in profile.json output,
+config.json, and `config_rfi_<slug>.json` without three copies
+of "remember to pass this back" code on the frontend.
+
+*Reuse `pipeline.ingest` helpers; re-implement only the embed loop.*
+`COLLECTIONS`, `BATCH_SIZE`, `embed_batch`, `chunk_id`,
+`sanitize_metadata`, the checkpoint accessors — all imported
+verbatim. The one piece we cannot reuse is `ingest_file` because
+it `print()`s to stdout and does not yield. So the service has
+its own embed loop that wraps `embed_batch` + `collection.add`
+in `asyncio.to_thread` and yields `{batch: i, total: N}` events
+between batches. The duplication is ~12 lines and the
+alternative (refactoring `ingest_file` to be a generator)
+would change the CLI's behaviour for no other reason than UI
+convenience — the kind of pipeline-touching change
+`pipeline/CLAUDE.md` forbids.
+
+*Column roles are NOT editable in the UI; only client/date are.*
+SPEC_UI's Ingest wireframe shows only client and date as
+editable fields, and the approve body's Pydantic schema reflects
+that (`session_id`, optional `client`, optional `date` — nothing
+else). If a column was mis-classified by the LLM, the user
+rejects the proposal and re-profiles. Two reasons: (a) editing a
+column role in the UI without re-validating would be a foot-gun
+— the validator's "exactly one question column, exactly one
+answer column" invariant can be silently violated by mid-flight
+edits; (b) keeping the column-role decision in the LLM/validator
+layer means the production recommendation from entry 13 stays
+reproducible — every UI-ingested file follows the same path the
+CLI-ingested files did.
+
+*Checkpoint discipline carries over from the CLI.* The UI ingest
+uses the SAME `outputs/.ingest_checkpoint.json` the CLI does.
+After a UI ingest succeeds, the four (collection, file) pairs
+are recorded. A subsequent CLI run sees them and skips.
+Inversely, a file already in the checkpoint (e.g. one of the
+production-ingested RFIs) is recognised when re-uploaded via UI
+and yields a `complete` event with `note: already in checkpoint
+— skipped`. This is what makes the UI ingest and CLI ingest
+operationally interchangeable — they read and write the same
+durable state.
+
+**Verification.** End-to-end ran against
+`data/Utiq_Publicis RFI.xlsx`, which is already in the
+production checkpoint:
+
+  POST /api/sessions                       -> {session_id: <uuid>}
+  POST /api/ingest/upload?session_id=...   -> {detected_rows: 60, ...}
+       (sidecar written: tmp/{sid}/original_filename = "Utiq_Publicis RFI.xlsx")
+  GET  /api/ingest/profile?session_id=...  -> 8 events ending in proposal
+  POST /api/ingest/approve                 -> 9 SSE events:
+       collection rfi_combined_cosine
+       complete   {collection: rfi_combined_cosine, chunks: 0, note: "skipped"}
+       collection rfi_combined_l2
+       complete   {collection: rfi_combined_l2, chunks: 0, note: "skipped"}
+       collection rfi_separated_cosine
+       complete   {collection: rfi_separated_cosine, chunks: 0, note: "skipped"}
+       collection rfi_separated_l2
+       complete   {collection: rfi_separated_l2, chunks: 0, note: "skipped"}
+       done       {total_chunks: 0, corpus_size: 1646}
+
+Final corpus size = 1646 (matches the pre-test corpus — no
+duplicate writes, no drift). Both `tmp/{sid}/config.json` and
+`config_rfi_utiq_publicis_rfi.json` at root are byte-identical
+and reflect the user-edited values (`client: "Publicis"`,
+`date: "2024"`) overriding the LLM's null inferences.
+
+The actual embedding code path is the same code the CLI uses
+to produce the 1 646-chunk corpus the production eval validates.
+Verifying its event-streaming wrapper against a not-yet-ingested
+file is deferred until a real new RFI is added — or by
+manually clearing one (collection, file) entry from the
+checkpoint and re-running. Not part of this Step's smoke test
+because the embed path itself has no UI-specific logic to
+exercise.
+
+**What it teaches.**
+
+The dual-persistence pattern (session-local config.json +
+repo-root config_rfi_<slug>.json from one write) is the
+load-bearing trick that lets the UI and CLI share state without
+either mode needing to know the other exists. The UI doesn't
+have to learn the CLI's checkpoint layout; the CLI doesn't have
+to learn that some sessions originated from the web. They both
+write/read the same canonical artefacts. If, much later, we add
+a third entry point (e.g. a CI job that ingests a new RFI from
+S3), it follows the same shape: write `config_rfi_<slug>.json`,
+copy the file into `data/`, mark the checkpoint. The trio is
+the corpus contract.
+
+This generalises: when wrapping a CLI as a UI, the UI's job is
+not to *replace* the CLI's persistence model but to *participate*
+in it. Anything the UI persists that the CLI ignores would
+either drift or be wasted work. Anything the CLI persists that
+the UI ignores would break re-runs.
+
+
