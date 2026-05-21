@@ -519,4 +519,108 @@ A shared builder is also a place to put the structural decisions
 in one location and the human approval gate is asking about *the*
 chunk shape, not *a* chunk shape.
 
+## 9. Ingestion: four collections, per-file checkpointing, empty-text filter — `ingest_rfi.py`
+
+**Context.** Step 5 is the first stage of the pipeline that calls
+the embedding API and writes to ChromaDB. Three design choices
+shaped the script.
+
+**Four collections, one per (strategy × distance metric).** The
+experiment matrix in the spec requires comparing cosine vs L2
+under both Strategy A (combined) and Strategy B (separated). The
+ChromaDB constraint that bit early: a collection's distance metric
+is set at creation time and is *immutable* — you cannot switch
+metric at query time. So the four collections are built up front,
+each with `metadata={"hnsw:space": "cosine" | "l2"}`. Switching at
+query time would have been a cleaner API but isn't on offer; given
+that, four collections is the right materialisation of the
+experiment matrix. Storage cost is negligible — 1024-dim vectors
+× ~1,650 chunks is rounding error.
+
+**Per-file checkpointing, not per-batch and not per-collection.**
+The unit of resumable work is one (collection, source_file) pair,
+recorded in `outputs/.ingest_checkpoint.json` after each pair
+completes. Trade-offs considered:
+
+- Per-batch checkpoint: more granular but extremely chatty (16-chunk
+  batches × 4 collections × 4 files = ~140 writes per full run);
+  recovery is more complex (which batch of which file is "next").
+- Per-collection checkpoint: simpler but loses up to a whole
+  collection's worth of work to a transient failure mid-collection.
+  The empirical run hit four 429 rate-limits during the Strategy B
+  L2 collection; per-collection checkpoint would have lost all
+  progress for that collection on the worst-case failure.
+- Per-file checkpoint: matches the natural failure recovery
+  granularity. Lose at most one file's embedding work to a
+  catastrophic failure; resume picks up at the next file. Picked.
+
+The choice is informed by `call_with_retry`'s behaviour: the helper
+absorbs transient 429s and 5xxs invisibly. The empirical evidence
+from this run shows it working: four 429s caught and retried during
+ingest, zero batches lost, zero manual intervention. The
+checkpoint only kicks in when retries are *exhausted* (sustained
+outage) — which is exactly the regime where you want resumable
+work.
+
+**Empty-text chunks dropped before embedding.** Following the
+loader's decision (entry 7) to keep "asked but unanswered" rows
+in `list[Row]`, Strategy B emits an empty-string answer chunk for
+each such row. Sending an empty string to `mistral-embed` either
+errors or returns a zero vector — either way the chunk pollutes
+retrieval. The ingester filters chunks where `text.strip() == ""`
+before the embed call; the paired question chunk is still embedded
+normally. Across the four real files, 14 answer chunks were
+filtered (3 + 10 + 1 + 0 by file). The Strategy B collections
+landed at 544 chunks each (279 + 279 − 14) rather than the naive
+558.
+
+**Empirical results.** Full ingestion succeeded end-to-end on the
+real corpus:
+
+| Collection | Chunks | Source |
+|---|---|---|
+| rfi_combined_cosine | 279 | 1 chunk per row |
+| rfi_combined_l2 | 279 | 1 chunk per row |
+| rfi_separated_cosine | 544 | 2 per row, − 14 empty answers |
+| rfi_separated_l2 | 544 | 2 per row, − 14 empty answers |
+
+A spot-check semantic query — *"What is your approach to GDPR
+compliance?"* — against `rfi_combined_cosine` returned the three
+most-on-topic rows in the corpus (all from the Publicis Futureproof
+file, all about privacy regulation compliance), with cosine
+distances in a tight 0.21–0.24 band. End-to-end retrieval works.
+
+**Other small calls.**
+
+- *Metadata sanitisation.* ChromaDB doesn't accept None or empty
+  strings in metadata in some versions. The ingester strips them
+  before add. The semantic loss ("this row has no date inferred")
+  is preserved by the absence of the key rather than a sentinel
+  value; filtered retrieval still works for rows that do have
+  dates.
+
+- *Stable IDs.* `<pair_id>` for combined chunks, `<pair_id>__role`
+  for separated. pair_id is globally unique (slug includes the
+  filename), so identifiers are stable across re-ingests. The
+  checkpoint prevents accidental duplicate-id errors by skipping
+  already-ingested (collection, source_file) pairs.
+
+**What it teaches.** When a step has API cost and DB-write side
+effects, design for resumability *before* you find out the hard way
+that you need it. The cost of writing per-file checkpoint logic
+upfront is ~30 lines of code; the cost of *not* having it the first
+time the embedding service goes intermittent is "re-embed
+everything you already did". The same pattern of "save the
+expensive thing as soon as you have it" applies to web scrapes,
+batch jobs, training runs — anywhere a partial result is more
+valuable than nothing.
+
+A related lesson: `call_with_retry` and per-file checkpointing are
+layered defences against different failure modes. Retry handles
+transient blips (429, 5xx, network) at the API-call level.
+Checkpointing handles sustained outage and process-level crashes
+at the work-unit level. Together they make the ingester robust to
+both. Picking just one of the two leaves a hole that the other
+covers.
+
 <!-- Next entry goes here -->
