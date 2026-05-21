@@ -2,3 +2,7 @@ mistralai>=2.0.0,<3.0.0
 chromadb>=0.5.0
 python-docx>=1.1.0
 pdfplumber>=0.10.0
+# Excel profiling + loading (spec Step 2 onwards). data_only mode gives
+# resolved formula values rather than formula strings — important because
+# RFI answer cells sometimes reference other sheets via formula.
+openpyxl>=3.1.0
