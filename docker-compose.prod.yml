@@ -1,0 +1,63 @@
+# docker-compose.prod.yml — production overlay for the UI services.
+# -------------------------------------------------------------------
+# Apply on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# ARCHITECTURAL DECISION: backend keeps the dev bind-mount (.:/app) in
+# production, only the command changes (drops --reload).
+#
+# An earlier draft of this file tried to replace the backend bind-mount
+# with named volumes for ONLY chroma_db / tmp / data. That broke a real
+# write-path: the UI ingest writes `config_rfi_<slug>.json` at the
+# project root (where `pipeline.ingest.load_all_rows` globs for it),
+# and the delete endpoint updates `outputs/.ingest_checkpoint.json`.
+# Neither path would have been on a volume — they'd live in the
+# container's writable layer and vanish on restart.
+#
+# The honest fix is to bind-mount the whole project directory in
+# production too, the same way dev does, and accept that the
+# production server needs a cloned repo. That matches how the user
+# actually deploys (`git pull && docker compose up -d` on the prod
+# server is the update path). It also means changes that don't
+# touch Python imports (a markdown edit, a typo fix, a docs change)
+# don't even require a container restart.
+#
+# The frontend IS self-contained in production: the multi-stage
+# Dockerfile.prod builds the static bundle into the image and
+# nginx-alpine serves it. No bind-mount, no Node runtime in the
+# running container.
+#
+# What's changed versus dev compose:
+#
+#   backend:
+#     - command: drops --reload (no inotify churn, faster startup).
+#       If the deployment grows past one concurrent user, bump
+#       --workers (uvicorn defaults to 1).
+#     - restart: unless-stopped so the daemon survives Docker
+#       daemon reboots / OOM kills without an external orchestrator.
+#
+#   frontend:
+#     - build target: Dockerfile.prod (multi-stage, builds static
+#       bundle then serves it via nginx-alpine).
+#     - volumes: empty list REPLACES the dev bind-mount + anon-volume
+#       node_modules dance. Bundle is baked into the image.
+#     - depends_on backend stays so compose orders the startup.
+#     - restart: unless-stopped same as backend.
+#
+# The dev `cli` service is inherited from docker-compose.yml without
+# modification. It works on the production box for one-off operations
+# (e.g. ingest a new RFI via CLI, debug a query) as long as the repo
+# is cloned there.
+
+services:
+  backend:
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    volumes: []
+    restart: unless-stopped

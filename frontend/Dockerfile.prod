@@ -1,0 +1,40 @@
+# frontend/Dockerfile.prod — production frontend image (build + serve)
+# ----------------------------------------------------------------------
+# ARCHITECTURAL DECISION: multi-stage build. Stage 1 (node-alpine)
+# produces the static bundle via `npm run build`. Stage 2 (nginx-alpine)
+# copies just the bundle and the nginx config, throws away the entire
+# build toolchain. Final image is ~30 MB instead of ~400 MB.
+#
+# Why nginx and not `serve` / a Node static server: the production
+# frontend has to proxy /api/* to the backend service. nginx does
+# this with two lines of config; a Node static server would need
+# a custom proxy middleware. nginx is also process-1-friendly
+# (no PID 1 reaper concerns) and well-known in deployment
+# environments.
+
+# ─── Stage 1: build the static bundle ──────────────────────────────────
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# package.json + lockfile first so `npm ci` caches when source changes
+# but dependencies don't. `npm ci` rather than `npm install` to enforce
+# the lockfile in production — no surprise minor-version bumps.
+COPY package.json package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+COPY . .
+RUN npm run build
+
+# ─── Stage 2: serve via nginx-alpine ───────────────────────────────────
+FROM nginx:1.27-alpine
+
+# Replace the default nginx config with ours (serves /app, proxies /api).
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy ONLY the built bundle, no toolchain.
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 3000
+
+# nginx-alpine ships a CMD that's already correct ([nginx, -g, daemon off;]).
+# We rely on it rather than redeclaring.

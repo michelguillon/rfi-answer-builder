@@ -2647,3 +2647,158 @@ it and the delete operation becomes its own engineering
 project.
 
 
+## 26. Production deployment shape — dev vs prod compose, what changes and why
+
+**Context.** After Step 9.5 the UI was feature-complete and the
+user wanted to deploy to a separate server. The dev compose was
+not production-shaped — bind-mounts everywhere, `uvicorn
+--reload` (development hot reload), Vite dev server (a full
+Node runtime continuously bundling in memory), no
+`.dockerignore` so `docker build` would have slurped client
+data into the image. None of those would have been fatal in
+production but each was wasteful or unsafe.
+
+This entry documents the dev/prod split that landed in
+`docker-compose.prod.yml` + `frontend/Dockerfile.prod` +
+`frontend/nginx.conf` + the new `.dockerignore` files. The
+shape is intentionally conservative — minimum viable
+production, no Kubernetes, no service mesh, no orchestration
+beyond Docker Compose. The deployment topology assumed is "one
+small server behind the org's existing SSO + reverse proxy",
+which matches the SPEC_UI.md out-of-scope statement on auth.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Two compose files (dev + prod overlay), not one
+environment-driven file.* `docker compose -f
+docker-compose.yml -f docker-compose.prod.yml up -d` overlays
+the prod file on top of the dev file. The dev compose stays
+unchanged — running `docker compose up backend frontend` on a
+laptop still hits the dev-friendly defaults (bind-mounts, HMR,
+--reload). Production differences are visible in one file with
+clear comments. The alternative — environment variables and
+Compose profiles inside one compose — would have made the
+behavioural diff implicit and harder to review.
+
+*Production backend keeps the dev bind-mount (`.:/app`), only
+the command changes.* An earlier draft of the prod compose
+tried to be more "production-ideal": replace the dev
+bind-mount with targeted bind-mounts for ONLY chroma_db, tmp,
+and data. That broke a real write path. The UI ingest writes
+`config_rfi_<slug>.json` at the project root (where
+`pipeline.ingest.load_all_rows` globs); the delete endpoint
+updates `outputs/.ingest_checkpoint.json`. Neither path was on
+the named volumes — they'd have lived in the container's
+writable layer and vanished on restart.
+
+The honest fix was to accept that the production server holds
+a cloned repo and bind-mount the whole directory the same way
+dev does, with `--reload` dropped. The "self-contained image"
+property is given up for the backend, but it was always going
+to be given up anyway because the pipeline writes through to
+several locations the user wants persisted. The trade is
+explicit now — clone the repo on the prod server, `git pull`
+to update, no special update workflow.
+
+The frontend IS self-contained in production because the
+static bundle is the only artefact it serves and that bundle
+goes in the image at build time. Symmetry isn't required —
+the layers have different persistence needs.
+
+*Production frontend is multi-stage (node build + nginx
+serve), not Vite dev server.* The Vite dev server is fine
+correctness-wise — it can serve a production deployment — but
+runs a full Node process continuously bundling in memory. For
+a long-running server that's hundreds of megabytes of resident
+RAM and a moving attack surface (Vite is a build tool, not
+hardened for production traffic). nginx-alpine is ~30 MB,
+process-1-friendly, well-known to ops. The multi-stage
+Dockerfile.prod throws the entire Node toolchain away after
+the bundle is built — final image is build-toolchain-free.
+
+*nginx config disables `proxy_buffering` for /api.* nginx's
+default behaviour is to buffer responses until end-of-stream
+then forward in one chunk. Applied to the SSE streams from
+the FastAPI backend, this would defeat the entire point of
+SSE — the user would see all events arrive at the moment of
+stream close instead of incrementally. `proxy_buffering off;
+proxy_cache off;` keep the per-event delivery intact. We
+already set `X-Accel-Buffering: no` at the FastAPI layer
+(api/CLAUDE.md), but the proxy-side flag is the
+load-bearing one in a deployment where nginx is the
+last hop before the browser.
+
+*`proxy_read_timeout 1h` on /api.* The default 60-second
+nginx timeout would kill an in-flight Mistral ingest of a
+large RFI mid-stream (28 questions × ~3-5s each = up to
+two minutes; eval runs are longer). One hour is a
+deliberately generous cap — long enough for any single
+realistic workload, short enough that a truly stuck stream
+eventually fails cleanly rather than holding the connection
+forever.
+
+*`.dockerignore` mirrors `.gitignore` plus extras.* The two
+files protect different surfaces:
+
+  - `.gitignore` keeps content out of git history (where it
+    would be irrecoverable post-leak).
+  - `.dockerignore` keeps content out of built images (where
+    it would ride along to whatever registry / production
+    server / sharing surface the image touches).
+
+Both must cover the same privacy-critical paths (data/*.xlsx,
+chroma_db/, outputs/, tmp/, .env), but `.dockerignore` ALSO
+excludes things that ARE git-committed but don't belong in
+the backend image (`frontend/`, `docs/`, `.git/` itself).
+
+*Production data/ bind-mount is read-write, not read-only.*
+The first draft of `docker-compose.prod.yml` marked
+`./data:/app/data:ro` because the data files are "user-managed
+source RFIs". This was wrong — the ingester COPIES the upload
+from `tmp/{sid}/upload.xlsx` to `data/<original_filename>` as
+part of the approve flow (entry 18). Forcing read-only would
+have broken the UI ingest workflow on production. Removed in
+the same commit that introduced it.
+
+**Verification.**
+
+  `docker compose -f docker-compose.yml -f
+   docker-compose.prod.yml build` — builds both images cleanly,
+   frontend final stage is nginx-alpine + the built bundle.
+
+  `docker compose -f docker-compose.yml -f
+   docker-compose.prod.yml up -d` — starts both services.
+
+  Browser visits http://localhost:3000/, Landing page renders
+  with corpus stats fetched via nginx's `/api/*` proxy. The
+  full ingest / answer / export workflows worked end-to-end
+  through the production stack (manual verification by the
+  user, per the standing headless-browser caveat).
+
+**What it teaches.**
+
+The smallest viable production-different-from-dev surface is:
+
+  1. Drop hot-reload (server is long-running, not iteratively
+     edited).
+  2. Replace dev-mode bundler with a real web server for the
+     static frontend.
+  3. Set restart policies.
+
+Everything else (bind-mounts, named volumes, registry pushes,
+orchestration) is a trade-off based on the deployment scale
+and ops model. For a single-server internal tool with a
+cloned repo and a reverse proxy in front, the simpler shape
+WINS — fewer moving parts, fewer files to keep in sync, less
+deployment-specific knowledge required of the maintainer.
+
+The smartness budget at "I want to put this on a server"
+should be spent on what actually breaks (the .dockerignore
+preventing client data from being baked into images, the
+nginx buffering off for SSE), not on architectural patterns
+that don't pay back at this scale (k8s manifests, secret
+managers, GitOps reconciliation). The dev compose + prod
+overlay split is what fits a small-team internal tool; bigger
+shapes are available when bigger problems show up.
+
+

@@ -68,6 +68,85 @@ your organisation's existing SSO + reverse proxy. See
 `docs/SPEC_UI.md` "What is deliberately out of scope" for the
 intended deployment topology.
 
+## Production deployment
+
+Deploying to a separate server (small internal-tool topology, no
+Kubernetes). Two compose files combine: the dev `docker-compose.yml`
+defines the services; `docker-compose.prod.yml` overrides the bits
+that differ in production.
+
+```bash
+# 1. On the server: clone the repo (it carries the prod compose,
+#    nginx config, and Dockerfile.prod).
+git clone <repo-url> /srv/rfi
+cd /srv/rfi
+
+# 2. Provide the API key.
+cp .env.example .env && $EDITOR .env   # set MISTRAL_API_KEY
+
+# 3. Optionally seed the corpus from your dev machine. Both
+#    chroma_db/ and data/ are bind-mounted in production, so an
+#    rsync moves the existing corpus across:
+rsync -avz --delete /path/to/dev/chroma_db/ server:/srv/rfi/chroma_db/
+rsync -avz /path/to/dev/data/ server:/srv/rfi/data/
+rsync -avz /path/to/dev/config_rfi_*.json server:/srv/rfi/
+rsync -avz /path/to/dev/outputs/.ingest_checkpoint.json server:/srv/rfi/outputs/
+
+# 4. Build + start.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+    up -d --build
+
+# Frontend: http://server:3000/   (nginx serving the static bundle,
+#                                  proxying /api/* to backend:8000)
+# Backend:  http://server:8000/   (uvicorn, no --reload)
+```
+
+**Differences from dev:**
+
+- Backend drops `--reload` (no inotify churn, faster startup).
+- Frontend is a multi-stage build (`frontend/Dockerfile.prod`):
+  stage 1 = Node build, stage 2 = nginx-alpine serving the static
+  bundle on :3000, proxying `/api/*` and `/healthz` to backend.
+  Final image is ~30 MB instead of ~400 MB.
+- Both services have `restart: unless-stopped`.
+
+**Updating** the production server:
+
+```bash
+git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+    up -d --build
+```
+
+Python source changes don't require a rebuild if the backend
+keeps its bind-mount (the dev compose's `.:/app` is inherited;
+`uvicorn` picks them up on the next request without --reload
+because Python re-imports per worker boot). Frontend changes
+DO require a rebuild because the static bundle is baked into
+the nginx image.
+
+**Sitting behind an SSO proxy** (the intended topology):
+
+Point your existing reverse proxy at `frontend:3000`. The
+frontend's nginx already proxies `/api/*` to the backend, so
+the external proxy doesn't need any path-specific routing —
+it just forwards everything to the frontend container. If you
+prefer to route `/api/*` directly to the backend from the
+external proxy (e.g. to skip the internal nginx hop), that
+works too; both paths reach the same backend.
+
+**Backups** — bind-mounted state lives on the host. Snapshot
+or rsync these directories for a complete backup:
+
+- `chroma_db/` — the vector store (regenerable via re-ingest, but
+  re-embedding the full corpus costs Mistral calls)
+- `data/` — the source RFI files (irrecoverable if lost)
+- `config_rfi_*.json` (at repo root) — column mappings
+- `outputs/.ingest_checkpoint.json` — what's been ingested
+
+`tmp/` is ephemeral (per-session, 24h TTL) and does not need
+backing up.
+
 ## Quick start — CLI (pipeline scripts directly)
 
 ```bash
