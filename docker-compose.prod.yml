@@ -28,36 +28,78 @@
 # nginx-alpine serves it. No bind-mount, no Node runtime in the
 # running container.
 #
-# What's changed versus dev compose:
+# ARCHITECTURAL DECISION: Caddy reverse-proxy topology (home server).
 #
-#   backend:
-#     - command: drops --reload (no inotify churn, faster startup).
-#       If the deployment grows past one concurrent user, bump
-#       --workers (uvicorn defaults to 1).
-#     - restart: unless-stopped so the daemon survives Docker
-#       daemon reboots / OOM kills without an external orchestrator.
+# On the Lenovo M720q server, a separate Caddy stack at /opt/caddy
+# owns ports 80/443 and proxies subdomains to per-app containers
+# over a shared external Docker network named `caddy`. Cloudflare
+# Tunnel terminates michel-portfolio.co.uk and forwards plain HTTP
+# to Caddy on the host.
 #
-#   frontend:
-#     - build target: Dockerfile.prod (multi-stage, builds static
-#       bundle then serves it via nginx-alpine).
-#     - volumes: empty list REPLACES the dev bind-mount + anon-volume
-#       node_modules dance. Bundle is baked into the image.
-#     - depends_on backend stays so compose orders the startup.
-#     - restart: unless-stopped same as backend.
-#
-# The dev `cli` service is inherited from docker-compose.yml without
-# modification. It works on the production box for one-off operations
-# (e.g. ingest a new RFI via CLI, debug a query) as long as the repo
-# is cloned there.
+# Implications for this compose file:
+#   - The frontend container is the only thing Caddy needs to reach;
+#     it already serves the static bundle AND proxies /api/* to the
+#     backend on the internal compose network (see frontend/nginx.conf).
+#     So Caddy maps rfi.michel-portfolio.co.uk -> rfi-frontend:3000
+#     and the backend stays off the external network entirely.
+#   - Host port publications are DROPPED. In dev we expose 8000:8000
+#     and 3000:3000 so a browser on the Windows host can reach them
+#     directly. In production neither is needed: the frontend is
+#     reached by Caddy on the shared `caddy` network; the backend is
+#     reached by the frontend's nginx on the project's default
+#     network. No port is published to the Linux host.
+#   - container_name is set on backend AND frontend so:
+#       * Caddy's reverse_proxy directive can name `rfi-frontend:3000`
+#         without inheriting the auto-generated `<dir>_frontend_1`
+#         name that varies with the deployment directory;
+#       * docker logs / docker exec from the server's shell don't
+#         need to look up the auto-name first.
+#   - The `caddy` network is declared `external: true` — the Caddy
+#     stack creates it; this compose file just joins. If the Caddy
+#     stack isn't up first, `docker compose up` fails fast with a
+#     clear error rather than silently creating a duplicate.
+#   - Frontend is on TWO networks: `default` (so its nginx can resolve
+#     the `backend` hostname) and `caddy` (so Caddy can reach it).
+#     Backend stays on `default` only.
 
 services:
   backend:
+    container_name: rfi-backend
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    # Override the dev compose's "8000:8000" host-port publication.
+    # An empty list REPLACES the inherited ports — backend is reached
+    # only on the internal compose network by the frontend's nginx.
+    ports: []
     restart: unless-stopped
+    networks:
+      - default
 
   frontend:
+    container_name: rfi-frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
+    # Override dev compose: prod uses the multi-stage nginx build,
+    # no bind-mount, no anon node_modules volume.
     volumes: []
+    # Drop the dev compose's "3000:3000" host port. Caddy reaches
+    # this container on the `caddy` network by container_name.
+    ports: []
     restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - default
+      - caddy
+
+networks:
+  # The shared reverse-proxy network. Created by the Caddy stack at
+  # /opt/caddy and joined here. `external: true` means compose will
+  # NOT try to create it — if it's missing, this stack fails to
+  # come up, which is the desired safety.
+  caddy:
+    external: true
+  # Project-local network for backend <-> frontend traffic. Declared
+  # explicitly because once a service lists `networks:`, compose no
+  # longer auto-attaches the implicit default network.
+  default:
