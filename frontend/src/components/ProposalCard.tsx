@@ -55,6 +55,17 @@ export function ProposalCard({
   const sortedLetters = Object.keys(proposal.column_roles).sort((a, b) =>
     a.length !== b.length ? a.length - b.length : a.localeCompare(b),
   );
+  // Collapse runs of consecutive `ignore` columns ("E", "F", "G", ...) into
+  // a single "E-G ignored (3)" row. RFI files frequently have long tails of
+  // empty / decorative columns that the heuristic marks ignored; listing
+  // each one as its own row drowns out the load-bearing question/answer
+  // assignments above. The condense keeps the user's attention on the
+  // mapping decisions that matter.
+  const mappingRows = collapseIgnoredRuns(
+    sortedLetters,
+    proposal.column_roles,
+    headerLookup,
+  );
 
   return (
     <Card>
@@ -71,25 +82,45 @@ export function ProposalCard({
         <div>
           <h3 className="text-sm font-medium mb-2">Column roles</h3>
           <ul className="space-y-1 text-sm">
-            {sortedLetters.map((letter) => {
-              const role = proposal.column_roles[letter];
-              const header = headerLookup[letter] ?? "";
-              const isReserved = ["question", "answer", "context", "ignore"].includes(
-                role,
-              );
+            {mappingRows.map((row) => {
+              if (row.kind === "ignored_range") {
+                return (
+                  <li
+                    key={`ignored:${row.start}:${row.end}`}
+                    className="flex items-center gap-3 font-mono text-xs text-muted-foreground"
+                  >
+                    <span className="w-16 shrink-0 font-semibold">
+                      {row.start}–{row.end}
+                    </span>
+                    <span className="flex-1 truncate italic">
+                      {row.count} columns
+                    </span>
+                    <Badge variant="secondary">ignored</Badge>
+                  </li>
+                );
+              }
+              const isReserved = [
+                "question",
+                "answer",
+                "context",
+                "ignore",
+              ].includes(row.role);
               return (
                 <li
-                  key={letter}
+                  key={row.letter}
                   className="flex items-center gap-3 font-mono text-xs"
                 >
-                  <span className="w-8 shrink-0 font-semibold text-muted-foreground">
-                    {letter}
+                  <span className="w-16 shrink-0 font-semibold text-muted-foreground">
+                    {row.letter}
                   </span>
-                  <span className="flex-1 truncate text-foreground" title={header}>
-                    {header || "—"}
+                  <span
+                    className="flex-1 truncate text-foreground"
+                    title={row.header}
+                  >
+                    {row.header || "—"}
                   </span>
                   <Badge variant={isReserved ? "default" : "secondary"}>
-                    {role}
+                    {row.role}
                   </Badge>
                 </li>
               );
@@ -148,4 +179,69 @@ export function ProposalCard({
       </CardFooter>
     </Card>
   );
+}
+
+// ── helpers ───────────────────────────────────────────────────────────
+
+type MappingRow =
+  | { kind: "single"; letter: string; header: string; role: string }
+  | { kind: "ignored_range"; start: string; end: string; count: number };
+
+function letterToColIndex(letter: string): number {
+  let n = 0;
+  for (const ch of letter.toUpperCase()) {
+    n = n * 26 + (ch.charCodeAt(0) - "A".charCodeAt(0) + 1);
+  }
+  return n;
+}
+
+function collapseIgnoredRuns(
+  sortedLetters: string[],
+  roles: Record<string, string>,
+  headerLookup: Record<string, string>,
+): MappingRow[] {
+  const out: MappingRow[] = [];
+  let i = 0;
+  while (i < sortedLetters.length) {
+    const letter = sortedLetters[i];
+    const role = roles[letter];
+    if (role === "ignore") {
+      // Look ahead for a run of consecutive ignored columns. "Consecutive"
+      // means their Excel column indexes differ by exactly 1 (so "E F G"
+      // collapses but "E F H" splits into "E-F" + "H").
+      let j = i;
+      while (j + 1 < sortedLetters.length) {
+        const next = sortedLetters[j + 1];
+        if (roles[next] !== "ignore") break;
+        if (letterToColIndex(next) !== letterToColIndex(sortedLetters[j]) + 1)
+          break;
+        j++;
+      }
+      if (j === i) {
+        out.push({
+          kind: "single",
+          letter,
+          header: headerLookup[letter] ?? "",
+          role: "ignore",
+        });
+      } else {
+        out.push({
+          kind: "ignored_range",
+          start: sortedLetters[i],
+          end: sortedLetters[j],
+          count: j - i + 1,
+        });
+      }
+      i = j + 1;
+    } else {
+      out.push({
+        kind: "single",
+        letter,
+        header: headerLookup[letter] ?? "",
+        role,
+      });
+      i++;
+    }
+  }
+  return out;
 }
