@@ -28,20 +28,21 @@ The repo has two layers, each with its own spec:
 
 | Layer | Spec | Status |
 |---|---|---|
-| **Pipeline** (CLI, ChromaDB, eval) | [docs/SPEC_RFI_Standalone.md](docs/SPEC_RFI_Standalone.md) | **Complete** — all 7 spec steps shipped + 14 learning-note entries + production recommendation. See git log for the per-step commits. |
-| **UI** (FastAPI + React + SSE) | [docs/SPEC_UI.md](docs/SPEC_UI.md) | **Next.** 9 implementation steps; should be built on a feature branch off main, not on main directly. |
+| **Pipeline** (CLI, ChromaDB, eval) | [docs/SPEC_RFI_Standalone.md](docs/SPEC_RFI_Standalone.md) | **Complete** — 7 spec steps + production recommendation. |
+| **UI** (FastAPI + React + shadcn/ui) | [docs/SPEC_UI.md](docs/SPEC_UI.md) | **Complete** on `feat/ui` — 9 spec steps + delete-RFI (9.5) + polish. |
 
-The pipeline is feature-complete and the eval has landed a production
-recommendation (`rfi_separated_cosine` + semantic + crossencoder +
-top-k=3). The UI layer wraps the existing pipeline package with a
-web app so non-technical staff can run both workflows (ingest +
-answer) without touching the CLI. **The pipeline modules
-(`pipeline.profile`, `pipeline.ingest`, `pipeline.query`,
-`pipeline.evaluate`) keep their existing behaviour — the UI wraps
-them by importing the functions, not by editing the modules. Don't
-change their behaviour for UI reasons.** (Organisational moves —
-renaming, splitting, restructuring — are fine and were done in
-commits 1–8 on `feat/ui`.)
+Both layers are feature-complete. The pipeline's eval (LEARNING_NOTES
+entry 13) landed the production recommendation
+(`rfi_separated_cosine` + semantic + crossencoder + top-k=3) which
+the UI's answer workflow uses as its default config. The UI's full
+build is documented in entries 15–25 on the `feat/ui` branch — read
+them in order for the rationale, or just read 18 + 19 + 25 for the
+load-bearing decisions. **The pipeline modules (`pipeline.profile`,
+`pipeline.ingest`, `pipeline.query`, `pipeline.evaluate`) keep their
+existing behaviour — the UI wraps them by importing the functions,
+not by editing the modules. Don't change their behaviour for UI
+reasons.** (Organisational moves — renaming, splitting,
+restructuring — are fine and were done in commits 1–8 on `feat/ui`.)
 
 ---
 
@@ -188,9 +189,9 @@ After each step:
 
 **Branch discipline.** Pipeline work landed directly on `main`
 (commits 35af1cf .. 338c9d3). The UI phase — including the
-pre-UI restructure — is happening on `feat/ui`. Don't push to
-main directly. Merge to main when the UI's Definition of Done is
-met and the restructure is stable.
+pre-UI restructure — landed on `feat/ui` and is ready to merge.
+Future work continues on feature branches off main; don't push
+to main directly.
 
 ---
 
@@ -219,15 +220,23 @@ retrieval/generation path:
 
 **Pipeline (SPEC_RFI_Standalone.md) — DONE.**
 - [x] Excel profiler on all 4 real RFI files
-- [x] Both chunking strategies ingested into 4 collections (1,646
-      chunks total)
+- [x] Both chunking strategies ingested into 4 collections
 - [x] Hybrid retrieval + 3 rerankers implemented
 - [x] Eval framework with hallucination/retrieval-gap reported separately
 - [x] Comparison table + production recommendation (entry 13)
-- [x] LEARNING_NOTES_RFI.md (14 entries)
+- [x] LEARNING_NOTES_RFI.md entries 1–14
 
-**UI (SPEC_UI.md) — TODO.** Tracked in that spec's own "Definition
-of done". Headline items: SSE endpoints, session cleanup, export
-pipeline, both workflows usable in the browser, sample data for
-public release, auth omission documented, LEARNING_NOTES updated
-with UI-specific findings.
+**UI (SPEC_UI.md) — DONE on `feat/ui`.**
+- [x] Backend: all SSE endpoints stream correctly
+- [x] Backend: session cleanup runs on startup
+- [x] Backend: export produces correct Excel with 3 new columns
+- [x] Frontend: both workflows complete end-to-end in the browser
+- [x] Frontend: SSE streams render in real time
+- [x] Frontend: answer cards are editable + show full provenance
+- [x] Frontend: cross-tenant client warning surfaced per answer
+- [x] Frontend: per-RFI delete from corpus on Landing page (Step 9.5)
+- [x] Docker Compose: `docker compose up` starts backend + frontend
+- [x] Auth omission documented in README + SPEC_UI + api/CLAUDE.md
+- [x] LEARNING_NOTES_RFI.md entries 15–25
+- [ ] Sample data created for public demo (deferred — only relevant
+      when preparing the eventual public-release sanitised repo)

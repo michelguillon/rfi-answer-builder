@@ -38,19 +38,41 @@ is a partial mitigation.
 
 | Layer | Status |
 |---|---|
-| Pipeline (CLI scripts, ChromaDB, eval) | **Complete** — see `docs/SPEC_RFI_Standalone.md` |
-| Web UI (FastAPI + React + SSE) | In progress on `feat/ui` — see `docs/SPEC_UI.md` |
+| Pipeline (CLI, ChromaDB, eval) | **Complete** — see `docs/SPEC_RFI_Standalone.md` |
+| Web UI (FastAPI + React + shadcn/ui) | **Complete** on `feat/ui` — see `docs/SPEC_UI.md` |
 
-## Quick start
+The pipeline is feature-complete with a 36-config production eval
+(LEARNING_NOTES entry 13). The UI wraps both workflows (ingest +
+answer) so non-technical staff can drive the pipeline without
+touching the CLI — full retrieval provenance per answer, plus a
+cross-tenant client-mention warning on every generated answer
+(LEARNING_NOTES entry 19) and per-RFI delete from the corpus
+(entry 25).
 
-**Prerequisites:**
-- Docker Desktop
-- A Mistral API key
+## Quick start — web UI
 
 ```bash
 # One-time setup
 cp .env.example .env
 # edit .env to add your MISTRAL_API_KEY
+
+# Build images + start backend (FastAPI) + frontend (Vite)
+docker compose up backend frontend
+# open http://localhost:3000/
+```
+
+The UI is two workflows (Add RFI to corpus, Answer a new RFI)
+plus per-RFI delete on the Landing page. **Authentication is
+deliberately out of scope** — the UI is designed to sit behind
+your organisation's existing SSO + reverse proxy. See
+`docs/SPEC_UI.md` "What is deliberately out of scope" for the
+intended deployment topology.
+
+## Quick start — CLI (pipeline scripts directly)
+
+```bash
+# One-time setup
+cp .env.example .env
 
 # Build the CLI image (downloads ~1 GB of deps incl. torch
 # and sentence-transformers for the crossencoder reranker)
