@@ -2214,3 +2214,139 @@ Landing commit would have been triple the size and reviewing
 framework correct?".
 
 
+## 23. UI Step 8 — Ingest wizard (3-step Upload → Profile → Ingest)
+
+**SPEC_UI Step 8 deliverable.** The first interactive flow in the
+UI. A three-step wizard that uploads an Excel, streams the
+profiler's discovery as a growing timeline, lets the user edit
+the inferred client/date in a ProposalCard, then streams ingest
+progress across the four collections with per-collection
+progress bars.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Page-local state via `useState`, not a state-machine library.*
+Three states (upload, profile, ingest), four transitions
+(upload→profile, approve→ingest, reject→upload, finish→upload).
+A reducer or XState would be overkill: the transitions are
+colocated with the buttons that trigger them, and the state
+reads top-to-bottom. If transitions grew to six or seven (or
+needed guards), a reducer would start paying off. At three, it
+would add framework noise for no clarity gain.
+
+*The proposal is extracted from the events array via `useMemo`,
+not held in a separate `useState`.* The proposal arrives as one
+event among many in the profile SSE stream. Two ways to surface
+it: write a setter inside an `onEvent` callback OR
+`useMemo(() => events.find(...), [events])`. The memo form keeps
+`events` as the single source of truth — when the stream resets,
+the proposal disappears for free, no extra setter to reset.
+It's also the same pattern used for the `done` event in Step 3.
+
+*The four collection progress bars are rendered unconditionally,
+not lazily as events arrive.* The list of four collection names
+is statically known (the same constant the backend's
+`pipeline.ingest.COLLECTIONS` exports). Listing them up front
+means the layout doesn't reflow as events flow in — the
+"waiting" state is just the default state for a collection
+that hasn't yet seen a `collection` event. If the list weren't
+fixed, the layout would jump every time a new collection
+arrives — distracting on a slow run, and worse on flaky
+connections.
+
+*The "Reject & re-profile" button does a full session reset, not
+a "go back" to the file picker with the upload intact.* The
+profile.json on disk reflects what the profiler produced from
+the current upload; if the user rejects, the LLM was wrong and
+re-running the profiler against the same bytes would likely
+produce the same wrong answer (temperature=0). The honest path
+is "start over" — re-upload (which is cheap; the user already
+has the file picked) and try again. Trying to be smart about
+"keep the upload, drop just the proposal" would create a state
+where tmp/{sid}/upload.xlsx exists with no profile.json, which
+no other endpoint expects.
+
+*Per-collection state is computed by replaying the events array
+in a `useMemo`, not by mutating a `useRef`-held map on each
+event.* The replay is O(events) on every render but events is
+small (<20 entries per ingest) and React is fast. A
+useRef-mutating approach would be slightly more efficient but
+would mean the visible state and the events array could diverge
+silently if a re-render is skipped. Replay is the safer
+contract: "what you see is what was streamed".
+
+*The `useSSE` hook is invoked twice — one instance per stream
+(profile + ingest).* The hook holds events + status + error in
+its own state; two streams require two instances. A single
+hook with two start methods would tangle the two streams'
+state into one object. Keeping them disjoint matches the
+underlying reality (two independent backend connections).
+
+*The done summary uses `corpus_size` from the SSE event, not a
+post-stream refetch of `/api/corpus/stats`.* The backend's
+ingest service yields `{total_chunks, corpus_size}` in the
+final `done` event — the corpus size already reflects the
+just-completed ingest. Refetching after the stream closes
+would add a round trip and risk a race window where the post-
+ingest stats are still being computed. The yielded value is
+authoritative; use it.
+
+**Verification.** Three TSX files compile via Vite without
+errors:
+
+  /src/components/StepTimeline.tsx     OK  9 540 bytes compiled
+  /src/components/ProposalCard.tsx     OK 22 305 bytes compiled
+  /src/pages/Ingest.tsx                OK 67 025 bytes compiled
+
+Backend SSE shapes the page consumes (profile + approve) were
+already verified end-to-end in Steps 2 and 3.
+
+The interactive flow itself (drag-drop, timeline updating live,
+proposal card edits, progress bars advancing, done summary,
+navigation buttons) was NOT verified in this environment — no
+headless browser available. The same caveat from entry 22
+applies. The user should run `docker compose up frontend
+backend`, open http://localhost:3000/ingest, drop an .xlsx
+that ISN'T in the production checkpoint (so the embed path
+exercises live), and confirm:
+
+  - dropzone shows filename on drop, Analyse button enables;
+  - clicking Analyse moves to Step 2 and the timeline grows
+    event-by-event;
+  - ProposalCard appears with column mapping table and
+    editable client/date inputs;
+  - clicking Approve moves to Step 3, all four progress bars
+    advance, completes within ~30s for a small RFI;
+  - done summary shows correct chunk counts;
+  - Add another / Go to answer buttons reset/navigate.
+
+**What it teaches.**
+
+The Ingest page is ~430 lines of TSX but only ~120 lines are
+the wizard's actual state and transitions; the rest is the
+JSX tree (cards, the dropzone, the timeline list, the progress
+list, the done summary). That ratio is what well-shaped
+composition feels like: most of the visible code is the
+*description* of what the screen looks like, not the
+*orchestration* of which API calls happen when.
+
+A naive implementation that mixed orchestration into the JSX
+(inline async functions in onClick handlers, fetch inside
+useEffect with cleanup, manual EventSource creation in
+mounts) would be the same length but unreadable. The shape
+that works here:
+
+  1. State is named and lives at the top of the function.
+  2. Async transitions live as named callbacks just below.
+  3. JSX describes the screen and triggers the named
+     callbacks; it doesn't construct fetch() calls or
+     instantiate EventSources.
+  4. Derived state goes through useMemo.
+
+This is the "page is a controller, lib is the model" split.
+Other UI frameworks make this explicit (MVC, MVVM); React
+doesn't enforce it but rewards it. Future pages — Answer in
+particular — will follow the same shape because the
+underlying SSE-driven nature is the same shape.
+
+
