@@ -1693,3 +1693,155 @@ either drift or be wasted work. Anything the CLI persists that
 the UI ignores would break re-runs.
 
 
+## 19. UI Step 4 — Answer workflow upload + per-question SSE
+
+**SPEC_UI Step 4 deliverable.** The Answer workflow: a fresh client
+RFI arrives, the backend extracts its questions, then streams
+generated answers one at a time, each carrying full retrieval
+provenance. This is the workflow the CPO singled out as
+"valuable specifically because the source attribution stays
+visible" (LEARNING_NOTES entry 12). Preserving that visibility
+in the UI was the explicit ask from feedback memory; the answer
+event payload was designed around it.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Use the production config from entry 13, not the older
+recommendation in the spec.* SPEC_UI Step 4's prompt was written
+before the eval finalised and specified
+`rfi_separated_cosine + hybrid + crossencoder + top-k=3`. The
+eval that ran later (entry 13) determined semantic retrieval
+beat hybrid on this small/paraphrase-rich corpus. The UI default
+follows entry 13 (`semantic`, not `hybrid`) — the spec describes
+the workflow shape; the eval describes which config wins
+empirically. Disagreement is resolved in favour of the empirical
+finding, with this note documenting why.
+
+*Question extraction is heuristic-first, LLM-fallback.* The
+ingest workflow's profile step is full Mistral+human; the answer
+workflow only needs ONE field (the question column letter). The
+heuristic from `pipeline.profile.profile_sheet` catches the easy
+cases instantly. When it returns zero candidates — which happens
+when the question column has prose questions without "?" and a
+non-obvious header like "Company Overview" — we fall back to a
+Mistral mapping call (same `request_mapping` the ingester uses)
+and read `column_roles[X] == "question"`. The fast path stays
+fast for files that fit the heuristic; the slow path costs one
+Mistral round-trip (~1-3s) for harder files. The user sees which
+method was used in the persisted `answer_questions.json`'s
+`detection_method` field, so column detection is auditable.
+
+*The answer event payload carries the full retrieval trace,
+not a summary.* Each `answer` event includes a `sources` list
+where every entry has rank, source_file, pair_id, section,
+client, score, score_type, question_text, AND answer_text. The
+AnswerCard in the frontend gets everything needed to render
+"this answer was drawn from these three past Q&A pairs, each
+showing the original question and the original answer". No
+"summary score" or "abbreviated source list" hides the
+provenance from the reviewer. This is the
+verbose-provenance-is-the-default rule (active memory
+`feedback-show-provenance`) expressed at the event-payload
+level — make it impossible to display less than the full trace.
+
+*Refusal is a first-class flag, not a substring match in the
+frontend.* The generator's refusal sentinel is the exact string
+"I cannot find this in our corpus." (set in the prompt; see
+LEARNING_NOTES entry 10). The service compares
+`answer_text.strip() == REFUSAL_TEXT` and sets `refused: true`
+on the event. The frontend can pattern-match the string instead,
+but every consumer would be re-deriving the same predicate.
+Expressing it once at the boundary keeps the contract clean —
+if the refusal phrasing ever changes, only this service needs
+to follow.
+
+*Cross-tenant client mentions are flagged per answer.* From
+LEARNING_NOTES entry 14 and active memory
+`feedback-cross-tenant-leakage`: generated answers can name
+past clients verbatim because retrieved chunks do. The pipeline-
+layer fix (prompt guard + post-redaction) is not implemented yet.
+Until it is, the UI surfaces the risk per answer: every known
+client name (collected from `config_rfi_*.json` files at repo
+root) is matched against the generated answer text with a word-
+boundary regex, and any hits are listed under
+`mentioned_clients`. The frontend renders this as a visible
+warning badge on the AnswerCard. This makes the
+"do not ship a send-directly-to-client path" rule from active
+memory enforceable: every answer that names a past client is
+marked, the reviewer sees the mark before approving, and the
+human review gate stays load-bearing rather than ceremonial.
+
+*Word-boundary matching, not substring.* A naive substring
+match would flag "Reach" inside "outreach" or "research" — false
+positives that train the user to ignore the warning. The match
+uses `\bNAME\b` (case-insensitive) so "Reach" matches only when
+it is a whole word. Trade-off: client names with embedded spaces
+("Bank of Foo") will match across whitespace correctly, but a
+client name that overlaps with a common English word will still
+hit false positives on accidental references. Acceptable — false
+positives lean toward over-warning, which is the safe side.
+
+*Synchronous Mistral calls run on the thread pool, not the event
+loop.* Same pattern as the profiler service. Each
+`_answer_one_question` call invokes `retrieve_semantic`,
+`rerank_crossencoder`, `fetch_paired_answers`, and
+`generate_answer` — every one of them blocking. Wrapping the
+function in `asyncio.to_thread` lets multiple tab-level sessions
+(or, in single-user dev, the SSE producer and the FastAPI event
+loop) make progress concurrently.
+
+*Upload returns synchronously; process is SSE.* Question
+extraction is fast (no Mistral, or one mapping call at most);
+the user wants to see "yes, 28 questions found" before clicking
+"Start answering". So `POST /api/answer/upload` returns a normal
+JSON response with the question count + a 3-question preview.
+The slow per-question generation is the GET `/api/answer/process`
+endpoint, which IS SSE because it can take minutes for a long
+RFI.
+
+**Verification.** Workflow ran end-to-end against
+`data/Utiq_Publicis RFI.xlsx` (28 questions in column B,
+heuristic-detected as Company Overview → LLM fallback identifies
+column B as `question`):
+
+  POST /api/sessions               -> session_id
+  POST /api/answer/upload          -> {question_count: 28,
+                                       question_column: "B",
+                                       question_column_header: "Company Overview",
+                                       questions_preview: [3 questions]}
+       answer_questions.json persisted with detection_method
+       = "llm-fallback".
+  GET  /api/answer/process         -> SSE stream:
+       progress index=1 ... total=28 question_text="..."
+       answer   index=1 question="..." answer="..."
+                 sources=[3 chunks with score+pair_id+source_file
+                          +question_text+answer_text per chunk]
+                 confidence=<top score>
+                 pair_ids=[3 pair ids]
+                 mentioned_clients=[]
+       (repeated 28x)
+       done     {answered: N, refused: M, total: 28}
+
+  answers.json persisted (28 entries with full provenance).
+
+**What it teaches.**
+
+The CPO feedback the project is built around — "I value being
+able to see where each answer came from" — could have been
+implemented as a generic confidence number on each answer.
+That would be the easy default and it would have been wrong.
+What makes the provenance load-bearing is that it's *the same
+shape as the underlying retrieval* — the same chunks, the same
+scores, the same source filenames the CLI prints to stdout. The
+UI is not summarising the retrieval; it is *displaying it
+directly*. Anything less would be a wrapper that hides the
+thing the user actually cares about.
+
+The general lesson: when the *visibility* of a system's
+internals is a feature (not an implementation detail), the
+wrapper layer must transmit those internals end-to-end without
+remixing or summarising. The summary is the consumer's job, not
+the wrapper's. The wrapper's job is to make the internals
+*available*.
+
+
