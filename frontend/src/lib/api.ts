@@ -86,6 +86,12 @@ export interface EditResponse {
   session_id: string;
 }
 
+export interface CorpusStats {
+  total_pairs: number;
+  source_files: number;
+  files: string[];
+}
+
 // ── SSE event union types ──────────────────────────────────────────────
 
 // Ingest profile stream
@@ -126,6 +132,11 @@ async function handleJson<T>(res: Response): Promise<T> {
 export async function createSession(): Promise<SessionCreated> {
   const res = await fetch("/api/sessions", { method: "POST" });
   return handleJson<SessionCreated>(res);
+}
+
+export async function getCorpusStats(): Promise<CorpusStats> {
+  const res = await fetch("/api/corpus/stats");
+  return handleJson<CorpusStats>(res);
 }
 
 export async function uploadIngest(

@@ -2110,3 +2110,107 @@ nobody can untangle later when one of the two halves needs to
 change in isolation.
 
 
+## 22. UI Step 7 — Landing page + corpus stats endpoint
+
+**SPEC_UI Step 7 deliverable.** The first user-facing page. Two
+shadcn Cards side-by-side (stack on mobile) — one for each
+workflow — plus a footer that fetches `GET /api/corpus/stats`
+and shows "N Q&A pairs across M source RFIs".
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Read corpus stats from `rfi_combined_cosine`, not the
+production-recommended `rfi_separated_cosine`.* Both collections
+see every RFI ingested, but separated stores TWO chunks per Q&A
+pair (one question, one answer). Reading distinct pair counts
+from separated would require iterating metadata to deduplicate.
+Combined stores ONE chunk per pair, so `collection.count()` IS
+the pair count directly. The choice is for display only — query
+routing still uses `rfi_separated_cosine`. Cheap operation,
+clean number.
+
+*Corpus stats endpoint fetches metadata for ALL chunks in a
+single `collection.get(include=["metadatas"])`.* The intent
+behind the endpoint is "give me a small JSON for the footer",
+so the call is read-once-per-page-load. For the current 279-pair
+corpus this returns ~4 KB of metadata in milliseconds. If the
+corpus grows past ~50 k chunks (~6 MB of metadata roundtrip),
+the right answer is to maintain a `source_files` index at
+ingest time and read from that — not to make this endpoint
+clever. The comment in the code names the threshold so a future
+maintainer doesn't have to guess.
+
+*StatsFooter renders three states: loading, error, populated.*
+The Landing page is the application entry point. If
+`/api/corpus/stats` returns 404 (no collection yet — a fresh
+deployment with no ingests), the footer doesn't surface an
+error toast; it shows a softer message "Corpus stats
+unavailable — likely no RFIs ingested yet. Add your first RFI"
+with a link to /ingest. The user landing on the page for the
+first time gets pointed at the right next action; they do not
+see a red error bar that suggests something is broken when in
+fact the system is just empty.
+
+*All backend file names are surfaced in a `title` attribute, not
+listed prominently.* The footer's primary message is the two
+numbers; the file list is secondary. Putting source filenames in
+a tooltip (and a comma-joined truncated line below) lets a
+reviewer who wants to verify "which files am I seeing" do so
+without pushing names like "INTERNAL - Reach Customer facing
+DPIA questions.xlsx" onto the page as visual noise. Filenames
+carry sensitive client identifiers; the page intentionally does
+not lead with them.
+
+*The Get Started CTA on each card uses shadcn `Button asChild`
+wrapping a `<Link>`.* That pattern propagates the Button styling
+to the react-router-dom Link element without duplicating the
+className surface. The alternative — onClick handlers calling
+`navigate()` — would lose right-click "Open in new tab" and
+break the browser's native link semantics. asChild is the
+correct shadcn idiom for "I want a styled element that is
+ALSO a router link".
+
+**Verification.** The visual rendering of the Landing page in
+a browser was NOT verified — this environment has no headless
+browser to drive. Verification was performed at three lower
+levels instead:
+
+  1. `GET /api/corpus/stats` (backend direct):
+     -> {total_pairs: 279, source_files: 4, files: [4 names]}
+  2. `GET /api/corpus/stats` (via Vite proxy on :3000):
+     -> identical payload (proxy passes through unchanged)
+  3. `GET /src/pages/Landing.tsx` (Vite TS compile):
+     -> 200 OK, 21 749 bytes of compiled JS, no errors in Vite
+        log. Confirms the page's TypeScript compiles, all
+        imports resolve (lucide-react ArrowRight/Database/
+        FileSpreadsheet, getCorpusStats, the Card primitives,
+        react-router-dom Link).
+
+This caveat applies to every frontend Step from here on: the
+project's CLAUDE.md notes "For UI changes, start the dev server
+and use the feature in a browser before reporting the task as
+complete" — we cannot fully honour that in this environment.
+Where it matters (Steps 8 and 9 in particular, which have
+substantial interactive flows), the user should manually open
+http://localhost:3000 and click through the workflow before
+treating a step as fully done.
+
+**What it teaches.**
+
+The Landing page is small (~110 lines of TSX) precisely because
+the scaffold did the heavy lifting. Cards, Buttons, typed API
+calls, Tailwind utilities — every primitive a Landing page
+needs was already in place from Step 6. The page is pure
+composition: pick the right primitives, give them content,
+arrange them with Tailwind classes.
+
+The deliberate consequence: when Step 8 adds the Ingest wizard,
+its commit will be similarly composition-heavy and similarly
+small in framework boilerplate. The scaffold pays itself back
+on every page that lands on top of it. If we'd skipped the
+scaffold step and built "framework + Landing" together, the
+Landing commit would have been triple the size and reviewing
+"is the page correct?" would have been entangled with "is the
+framework correct?".
+
+

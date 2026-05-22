@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api.routers import answer, ingest, sessions
+from api.routers import answer, corpus, ingest, sessions
 from api.session import cleanup_old_sessions
 
 logger = logging.getLogger("api.main")
@@ -51,6 +51,7 @@ app = FastAPI(
 app.include_router(sessions.router)
 app.include_router(ingest.router)
 app.include_router(answer.router)
+app.include_router(corpus.router)
 
 
 @app.get("/healthz")
