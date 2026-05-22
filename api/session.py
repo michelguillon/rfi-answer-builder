@@ -27,7 +27,7 @@ Concurrency *within* a session is not a concern because a session
 maps 1:1 to a browser tab and the workflows are step-locked
 (upload → profile → approve → ingest, etc.).
 
-ARCHITECTURAL DECISION: 24-hour TTL, startup-only cleanup.
+ARCHITECTURAL DECISION: 24-hour TTL, startup + hourly cleanup.
 
 Sessions exist to hold an in-flight workflow's intermediate state;
 they are not durable user data. 24 hours is generous for "user
@@ -35,17 +35,24 @@ walked away, came back tomorrow"; longer would mean accumulating
 forgotten uploads of real client RFIs on disk. Shorter would risk
 interrupting an actual lunch break.
 
-Cleanup runs once on app startup. The spec ("on startup AND at
-midnight") imagined a scheduled task, but a deployment that
-restarts daily — which is typical for internal tools running
-behind a reverse proxy — gets the same effect for zero
-infrastructure cost. If sessions ever accumulate in practice
-(long-running deployment + heavy daily use), promote this to an
-asyncio background task. Until then, the simpler shape wins.
+Cleanup runs on app startup AND every hour via an asyncio task
+spawned from the FastAPI lifespan. The original design (startup-
+only) assumed daily restarts; the production deployment uses
+`restart: unless-stopped` and survives for weeks, so a restart-
+triggered sweep is effectively never. Promoting cleanup to a
+background task is the exact upgrade LEARNING_NOTES entry 16
+foresaw ("if sessions ever accumulate in practice, promote this
+to an asyncio background task"). It keeps the cleanup logic
+close to the code that creates sessions and travels with the
+app rather than per-server cron config — one less artefact to
+keep in sync across deployments. The 1-hour interval bounds
+worst-case staleness to TTL + 1h = 25h.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import shutil
 import time
 from pathlib import Path
@@ -53,8 +60,11 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+logger = logging.getLogger(__name__)
+
 TMP_DIR = Path("./tmp")
 SESSION_TTL_SECONDS = 24 * 60 * 60
+CLEANUP_INTERVAL_SECONDS = 60 * 60
 
 
 def create_session() -> str:
@@ -99,3 +109,35 @@ def cleanup_old_sessions() -> int:
             shutil.rmtree(session_dir, ignore_errors=True)
             removed += 1
     return removed
+
+
+async def cleanup_periodically(interval_seconds: int = CLEANUP_INTERVAL_SECONDS) -> None:
+    """Sleep, sweep stale sessions, repeat forever.
+
+    Spawned as an asyncio task from the FastAPI lifespan; cancelled
+    cleanly on shutdown via the surrounding asynccontextmanager.
+
+    Sleep first, then sweep: the lifespan already runs one synchronous
+    cleanup at startup, so the first periodic sweep is one interval
+    later — no double-sweep at boot.
+
+    The cleanup itself is sync I/O (shutil.rmtree). Wrapped in
+    asyncio.to_thread so a slow rmtree on a large session does not
+    block the event loop while it's running.
+
+    Errors from a single iteration are logged and swallowed so a
+    transient filesystem hiccup cannot kill the loop for the rest
+    of the deployment's lifetime — that would silently re-create
+    the very accumulation problem this task exists to prevent.
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            removed = await asyncio.to_thread(cleanup_old_sessions)
+            if removed:
+                logger.info(
+                    "Periodic session cleanup: removed %d expired session(s)",
+                    removed,
+                )
+        except Exception:  # noqa: BLE001 — keep the loop alive across transient errors
+            logger.exception("Periodic session cleanup failed")

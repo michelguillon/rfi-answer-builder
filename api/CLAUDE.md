@@ -107,18 +107,24 @@ Do **not**:
 - Long-lived sessions in lieu of auth (the 24-hour TTL exists for
   cleanup, not security)
 
-## Cleanup runs on startup
+## Cleanup runs on startup AND hourly
 
-`api.session.cleanup_old_sessions()` is called from the lifespan
-context manager in [api/main.py](main.py) at app startup. Sessions
-older than 24 hours are removed.
+`api.session.cleanup_old_sessions()` is called synchronously from
+the lifespan context manager in [api/main.py](main.py) at app
+startup. Sessions older than 24 hours are removed.
 
-A scheduled midnight pass was in the spec; it was dropped in
-favour of restart-based cleanup because deployments restart often
-enough that a daily timer would be redundant. If accumulation
-becomes a problem (long-running deployment + heavy daily use),
-promote this to an asyncio background task — but until there is
-evidence of need, the simpler shape wins.
+In addition, the lifespan spawns `cleanup_periodically()` as an
+asyncio task that re-runs the sweep every hour for the lifetime
+of the process. The task is cancelled cleanly on shutdown.
+
+Why both? The startup sweep guarantees a clean slate at every
+restart; the hourly task bounds growth on long-running production
+deployments where `restart: unless-stopped` means the process
+survives for weeks. The original design was startup-only on the
+assumption that internal tools restart daily — that assumption
+broke once we deployed behind Cloudflare Tunnel on a home server
+where weeks-long uptime is the norm. See LEARNING_NOTES entry 27
+for the full upgrade rationale.
 
 ## Default config for the answer workflow
 

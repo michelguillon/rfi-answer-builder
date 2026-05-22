@@ -2802,3 +2802,117 @@ overlay split is what fits a small-team internal tool; bigger
 shapes are available when bigger problems show up.
 
 
+## 27. Session cleanup promoted from startup-only to startup + hourly asyncio task
+
+**Context.** Entries 16 and api/CLAUDE.md both documented the
+startup-only TTL sweep with the same caveat: "if sessions ever
+accumulate in practice (long-running deployment + heavy daily
+use), promote this to an asyncio background task. Until then,
+the simpler shape wins." The home-server deployment (entry 26)
+runs with `restart: unless-stopped` behind Cloudflare Tunnel
+and survives for weeks of uptime. The "daily restart" assumption
+the startup-only design rested on no longer holds, so the
+condition the earlier entry named is now met. This entry
+documents the promotion.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Keep the startup sweep AND add a periodic task — don't replace.*
+The startup sweep is still useful: it guarantees a clean slate
+on every deploy / restart, and surfaces a single explicit log
+line ("removed N sessions on startup") that's easy to scan in
+the boot output. The periodic task handles the long-uptime case
+the startup sweep cannot. Both call the same
+`cleanup_old_sessions()` — one function, one place to change
+the deletion logic if the directory layout ever shifts.
+
+*1-hour interval.* The TTL is 24h, so worst-case staleness is
+TTL + interval = 25h. Hourly is also discoverable in logs
+within an hour of deploy rather than waiting a day to confirm
+the task is alive. A shorter interval (e.g. 5 minutes) would
+add no real value — a session lingering for 24h vs 25h vs 24h05m
+is operationally identical — and would log spuriously on a
+quiet deployment.
+
+*Sleep first, then sweep.* The periodic loop awaits the
+interval BEFORE the first cleanup, because the lifespan already
+ran a synchronous sweep at startup. Sweeping immediately on
+task-start would either duplicate that work or race with it.
+Sleep-first is the right ordering for "do the startup thing
+synchronously, then take over from here".
+
+*`asyncio.to_thread` around the sync cleanup call.*
+`cleanup_old_sessions` uses `shutil.rmtree` — synchronous
+filesystem I/O. Running it directly inside the async task
+would block the event loop for the duration of the rmtree
+(usually milliseconds, but a session with a large `upload.xlsx`
+or `output.xlsx` could be longer). Wrapping in `to_thread`
+offloads to the default thread pool so concurrent SSE streams,
+ingestion runs, and answer generations keep progressing.
+Same pattern as the profiler / ingester / answerer services
+(entries 17, 18, 19).
+
+*Errors caught at the task boundary, logged with
+`logger.exception`, then swallowed.* A `try/except Exception`
+around the body of the loop is exactly what the
+"never let it die" comment in the docstring is for. If a
+single iteration fails (filesystem hiccup, permissions glitch,
+disk briefly full), we want the next iteration to still happen
+an hour later — not silent task death that re-creates the
+accumulation problem the task exists to prevent. The traceback
+goes to logs via `logger.exception`, so the failure is
+diagnosable; the loop survives.
+
+*Task cancellation handled via the lifespan's `finally` block.*
+On shutdown, `cleanup_task.cancel()` interrupts the
+`asyncio.sleep` (or the cleanup mid-flight); we then await
+the task and swallow `CancelledError`. Without the await,
+uvicorn would log "Task was destroyed but it is pending"
+warnings on every shutdown. The pattern is boilerplate but
+load-bearing — async tasks need explicit cleanup or they
+leak warnings and occasionally state.
+
+**Verification.** Manual: `docker compose ... up -d --build`,
+then `docker logs rfi-backend` shows the two startup lines
+(`Session cleanup on startup: ...`) followed an hour later by
+either silence (nothing to clean) or
+`Periodic session cleanup: removed N expired session(s)`.
+
+Smoke-test the cancellation path: `docker compose ... restart
+backend` and confirm no "Task was destroyed but it is pending"
+warnings in the logs. The lifespan's `finally` block runs the
+cancel+await before uvicorn finishes shutdown.
+
+**What it teaches.**
+
+This is the simplest possible example of "the architecture
+predicted its own upgrade path correctly". Entry 16 didn't try
+to over-engineer the original cleanup — it picked the minimal
+shape that worked for the deployment profile at the time AND
+named the exact upgrade trigger ("if sessions ever accumulate
+in practice") AND the exact upgrade ("asyncio background
+task"). When the trigger fired (entry 26's deployment shape
+broke the daily-restart assumption), the upgrade was a 30-line
+patch landing exactly where entry 16 predicted.
+
+The general principle: when picking the simpler shape, document
+the *condition* that would require the more complex shape and
+the *exact form* the upgrade should take. Future-you (or a
+future maintainer) doesn't have to re-derive the architecture
+when the simpler shape stops fitting — they just check the
+trigger against current reality and execute the named upgrade.
+The cost is one extra paragraph in the original decision;
+the payoff is that the next decision is already half-made.
+
+This pattern is opposite of the more common failure mode:
+shipping the simpler shape AND quietly hoping it stays
+sufficient. That works fine until it doesn't, at which point
+the maintainer is debugging a production accumulation issue
+with no signposted upgrade path and has to redo the design
+work under pressure. Signposting the upgrade in the original
+decision turns "production incident → architecture redesign"
+into "trigger fired → execute the documented upgrade".
+
+
+
+

@@ -9,13 +9,14 @@ Which executes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from api.routers import answer, corpus, ingest, sessions
-from api.session import cleanup_old_sessions
+from api.session import cleanup_old_sessions, cleanup_periodically
 
 logger = logging.getLogger("api.main")
 logging.basicConfig(level=logging.INFO)
@@ -37,9 +38,22 @@ async def lifespan(app: FastAPI):
         logger.info("Session cleanup on startup: removed %d expired session(s)", removed)
     else:
         logger.info("Session cleanup on startup: nothing to remove")
-    yield
-    # No shutdown work today — sessions are persisted on disk and
-    # the TTL sweep on the next startup is what bounds growth.
+
+    # Background task that re-runs cleanup every hour. The startup
+    # sweep above only covers boot; production runs `restart:
+    # unless-stopped` and survives for weeks, so periodic sweeping
+    # is what actually bounds growth between restarts. See
+    # api/session.py and LEARNING_NOTES entry 27 for the rationale.
+    cleanup_task = asyncio.create_task(cleanup_periodically())
+
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
