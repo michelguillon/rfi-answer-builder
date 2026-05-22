@@ -1,0 +1,57 @@
+# .dockerignore — what does NOT get COPYed into the backend / cli image.
+# -----------------------------------------------------------------------
+# Load-bearing for two reasons:
+#
+#   1. PRIVACY.  Without this file, `docker build .` would slurp `data/`,
+#      `outputs/`, `tmp/`, `chroma_db/`, and `.env` into the image. The
+#      first four contain real client RFI text; .env contains the
+#      Mistral API key. None of those belong in a built image.
+#
+#   2. IMAGE SIZE.  The ChromaDB store + outputs/ + frontend/node_modules
+#      together are tens of MB the runtime doesn't need.
+#
+# Mirror of .gitignore plus a few extras that ARE git-committed but
+# shouldn't be in the image (e.g. docs/, frontend/ when building the
+# backend image).
+
+# --- Privacy-critical (matches .gitignore) -------------------------------
+.env
+.env.*
+*.key
+data/*.xlsx
+data/*.xls
+data/*.csv
+data/*.pdf
+data/*.docx
+config_rfi_*.json
+outputs/
+chroma_db/
+*.sqlite3
+tmp/
+
+# --- The frontend lives in its own image; don't bake it into the backend
+frontend/
+
+# --- Build / source-control noise ----------------------------------------
+.git/
+.gitignore
+.dockerignore
+.github/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# --- Editor / OS noise ---------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/
+
+# --- Docs / tooling not needed at runtime --------------------------------
+docs/
+*.md
+!README.md

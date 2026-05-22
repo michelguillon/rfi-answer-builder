@@ -39,7 +39,7 @@ is a partial mitigation.
 | Layer | Status |
 |---|---|
 | Pipeline (CLI, ChromaDB, eval) | **Complete** — see `docs/SPEC_RFI_Standalone.md` |
-| Web UI (FastAPI + React + shadcn/ui) | **Complete** on `feat/ui` — see `docs/SPEC_UI.md` |
+| Web UI (FastAPI + React + shadcn/ui) | **Complete** — see `docs/SPEC_UI.md` |
 
 The pipeline is feature-complete with a 36-config production eval
 (LEARNING_NOTES entry 13). The UI wraps both workflows (ingest +
@@ -161,44 +161,59 @@ entry 13):
 ## Architecture
 
 ```
-Excel RFIs ──► pipeline.profile ──► config_rfi_*.json (human-approved)
-                                            │
-                                    pipeline.ingest ──► ChromaDB (4 collections)
-                                                              │
-                             New question ────────────────────┘
-                                                              │
-                                                    pipeline.query
-                                               (retrieve → rerank → generate)
-                                                              │
-                                               Answer + provenance + scores
+                                Browser
+                                   │
+                          frontend:3000 (React + Vite + shadcn)
+                                   │
+                                /api/*
+                                   ▼
+                          backend:8000 (FastAPI + SSE)
+                                   │
+                       ┌───────────┴───────────┐
+                       │ import (not subprocess)
+                       ▼                       ▼
+                  pipeline.profile      pipeline.query
+                  pipeline.ingest       (retrieve → rerank → generate)
+                       │                       │
+                       ▼                       ▼
+                  ChromaDB (4 collections, embedded PersistentClient)
+                  rfi_combined_{cosine,l2}, rfi_separated_{cosine,l2}
 ```
 
-The 4 ChromaDB collections cover the experiment matrix:
-`rfi_combined_cosine`, `rfi_combined_l2`,
-`rfi_separated_cosine`, `rfi_separated_l2`.
+The same pipeline modules drive both entry points — the CLI runs
+them via `python -m pipeline.<module>`, the FastAPI services
+import them as Python functions. No subprocess shelling between
+layers (see `api/CLAUDE.md`).
 
 ## Documentation
 
 | File | Purpose |
 |---|---|
-| `CLAUDE.md` | Conventions for Claude Code working in this repo (Docker, Mistral SDK, branch discipline, active memory) |
+| `CLAUDE.md` | Cross-cutting conventions for Claude Code working in this repo (Docker, Mistral SDK, ChromaDB, code style, branch discipline, active memory) |
+| `pipeline/CLAUDE.md` | Pipeline-layer rules: dual CLI+import contract, openpyxl conventions, checkpoint discipline |
+| `api/CLAUDE.md` | Backend-layer rules: SSE event format, filesystem-backed sessions, "import not subprocess", no-auth-by-design |
+| `frontend/CLAUDE.md` | Frontend-layer rules: shadcn-first, useSSE hook contract, verbose provenance mandate, cross-tenant warning placement |
 | `docs/SPEC_RFI_Standalone.md` | Pipeline spec — every architectural decision and 7 ordered build steps |
-| `docs/SPEC_UI.md` | UI spec — same shape, 9 ordered build steps |
-| `docs/LEARNING_NOTES_RFI.md` | 14 entries explaining *why* each non-obvious decision was made, alternatives rejected, and the empirical findings from running on real data |
+| `docs/SPEC_UI.md` | UI spec — same shape, 9 ordered build steps + 9.5 corpus delete |
+| `docs/LEARNING_NOTES_RFI.md` | 26 entries explaining *why* each non-obvious decision was made, alternatives rejected, and the empirical findings from running on real data |
 
 Read the learning notes for the *why*; read the spec for the *what*.
 
 ## Privacy
 
-This is a **private repository**. The following are gitignored:
+This is a **private repository**. The following are gitignored
+AND covered by `.dockerignore` so they cannot land in a built
+image either:
 
 ```
-data/*.xlsx  data/*.pdf  data/*.docx  data/*.csv   (real client RFIs)
-config_rfi_*.json                                  (column maps include client/date)
-outputs/                                           (eval results, checkpoints)
-chroma_db/                                         (embedded chunk text)
-tmp/                                               (UI per-session state)
-.env                                               (Mistral API key)
+data/*.xlsx data/*.pdf data/*.docx data/*.csv   (real client RFIs)
+config_rfi_*.json                               (column maps include client/date)
+outputs/                                        (eval results, checkpoints)
+chroma_db/                                      (embedded chunk text)
+tmp/                                            (UI per-session state)
+.env                                            (Mistral API key)
+frontend/node_modules/                          (host-built, platform-specific)
+frontend/dist/                                  (built bundle — regenerated in image)
 ```
 
 The fake `data/sample_rfi.xlsx` is the only explicit exception. If
@@ -208,7 +223,7 @@ data only.
 
 ## Stack
 
-- **Python 3.13** in Docker (slim base)
+- **Python 3.13** in Docker (slim base) — pipeline + FastAPI
 - **Mistral** — `mistral-embed` for embeddings, `mistral-small-latest`
   for inference and as the LLM judge / LLM reranker
 - **ChromaDB** — `PersistentClient` embedded library, not server
@@ -217,7 +232,11 @@ data only.
 - **rank_bm25** — keyword scoring; index built fresh per query
 - **sentence-transformers** — cross-encoder reranker
   (`cross-encoder/ms-marco-MiniLM-L-6-v2`), lazy-imported
-- **Coming**: FastAPI + React + shadcn/ui for the web UI
+- **FastAPI + uvicorn** — backend (port 8000), SSE-native
+- **React 18 + Vite + TypeScript + Tailwind + shadcn/ui** — frontend
+  (port 3000)
+- **nginx-alpine** — production frontend image only (serves the
+  static bundle, proxies `/api/*` to the backend)
 
 ## Learning project
 

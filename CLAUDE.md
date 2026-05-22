@@ -12,13 +12,13 @@ subtrees:
 - [pipeline/CLAUDE.md](pipeline/CLAUDE.md) — CLI + import contract,
   Excel/openpyxl rules, checkpoint discipline, "files copied
   unchanged" list.
-- `api/CLAUDE.md` — added when the FastAPI scaffold lands (SPEC_UI
-  Step 1). Will cover SSE event format, session.py contract, the
-  "import not subprocess" rule for wrapping pipeline functions.
-- `frontend/CLAUDE.md` — added when the React scaffold lands
-  (SPEC_UI Step 6). Will cover shadcn-first component rules, the
-  `useSSE` hook contract, and the mandatory provenance + cross-tenant
-  leakage handling in answer cards.
+- [api/CLAUDE.md](api/CLAUDE.md) — SSE event format,
+  filesystem-backed sessions, the "import not subprocess" rule
+  for wrapping pipeline functions, no-auth-by-design.
+- [frontend/CLAUDE.md](frontend/CLAUDE.md) — shadcn-first
+  component rules, the `useSSE` hook contract, mandatory
+  verbose provenance in AnswerCard, cross-tenant warning
+  placement.
 
 ---
 
@@ -51,12 +51,16 @@ restructuring — are fine and were done in commits 1–8 on `feat/ui`.)
 A multi-document RFI Q&A system. Ingest Excel RFIs with inconsistent
 schemas, profile each, store in a shared corpus with rich metadata,
 and answer new RFI questions using hybrid retrieval (BM25 + semantic)
-with optional reranking. Now growing a web UI on top.
+with optional reranking. Wrapped in a FastAPI + React web UI for
+non-technical staff (`/ingest`, `/answer`, plus per-RFI delete on
+the Landing page).
 
 This is a **private repository**. It will be handed over to the
 employer on exit, and a sanitised version may eventually go public
 with sample data only (see SPEC_UI.md "Public repo preparation"). No
-proprietary client data may ever land in a commit.
+proprietary client data may ever land in a commit OR in a built
+Docker image (the `.dockerignore` enforces the latter — keep it
+current when adding new data-bearing directories).
 
 ---
 

@@ -1,0 +1,22 @@
+# frontend/.dockerignore — what does NOT get COPYed into the frontend image.
+# ---------------------------------------------------------------------------
+# Most importantly: the host's node_modules MUST NOT land in the image.
+# It may have been built on Windows / macOS and contain platform-specific
+# binaries (esbuild, sharp, etc.) that don't run inside the Linux Alpine
+# container. The Dockerfile does `npm install` AFTER copying package.json
+# but BEFORE the bulk COPY, so a host node_modules sneaking past would
+# overwrite the freshly-installed Linux ones.
+
+node_modules/
+dist/
+
+# --- Build / source-control noise ----------------------------------------
+.git/
+.gitignore
+.dockerignore
+
+# --- Editor / OS noise ---------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -605,14 +605,18 @@ docker compose up
 
 ## Definition of done
 
-- [ ] Backend: all SSE endpoints stream correctly
-- [ ] Backend: session cleanup runs on startup
-- [ ] Backend: export produces correct Excel with 3 new columns
-- [ ] Frontend: both workflows complete end-to-end in the browser
-- [ ] Frontend: SSE streams render in real time (no full-page refresh)
-- [ ] Frontend: answer cards are editable before export
-- [ ] Docker Compose: `docker compose up` starts all three services
-- [ ] Sample data created for public demo
-- [ ] Auth omission documented in README
-- [ ] LEARNING_NOTES_RFI.md updated with UI findings
-- [ ] Repo made public with sample data only
+- [x] Backend: all SSE endpoints stream correctly (Steps 2, 3, 4)
+- [x] Backend: session cleanup runs on startup (Step 1)
+- [x] Backend: export produces correct Excel with 3 new columns (Step 5)
+- [x] Frontend: both workflows complete end-to-end in the browser (Steps 8, 9)
+- [x] Frontend: SSE streams render in real time (no full-page refresh)
+- [x] Frontend: answer cards are editable before export (Step 9)
+- [x] Docker Compose: `docker compose up` starts all three services
+- [x] Auth omission documented in README + SPEC_UI + api/CLAUDE.md
+- [x] LEARNING_NOTES_RFI.md updated with UI findings (entries 15–26)
+- [x] Per-RFI delete from corpus (Step 9.5 — added after user feedback)
+- [x] Production deployment artifacts: .dockerignore, docker-compose.prod.yml,
+      frontend/Dockerfile.prod + nginx.conf (entry 26)
+- [ ] Sample data created for public demo (deferred — only relevant
+      when preparing the eventual public-release sanitised repo)
+- [ ] Repo made public with sample data only (deferred, depends on above)
