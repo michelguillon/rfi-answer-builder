@@ -1986,3 +1986,127 @@ trail emission) reads from it. Trimming it would push work back
 into those downstream tools.
 
 
+## 21. UI Step 6 — Frontend scaffold (Vite + TS + shadcn + Router)
+
+**SPEC_UI Step 6 deliverable.** Stand up `frontend/` with Vite +
+React + TypeScript, install shadcn primitives, wire React Router,
+add a Dockerfile + compose service, and write `frontend/CLAUDE.md`
+covering the layer-specific conventions. No business logic yet —
+the three pages (Landing, Ingest, Answer) are stubs; Steps 7–9
+fill them in.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Vite proxy for /api, not CORS on FastAPI.* The browser fetches
+`/api/...` from `localhost:3000`; Vite (running inside the
+frontend container) proxies those requests to `http://backend:8000`.
+This works identically in production behind any reverse proxy
+that forwards `/api` to the FastAPI port. Hard-coding
+`http://localhost:8000` in the frontend bundle would couple the
+bundle to a specific deployment URL. CORS allowlists on FastAPI
+would grow every time a new deployment URL appears. Relative
+paths + a proxy keep both ends portable. The cost: ~10 lines of
+Vite config.
+
+*One unified `useSSE` hook covering GET and POST SSE.* The
+backend has two SSE shapes: GET (profile, process — plain SSE,
+EventSource works) and POST (approve — POST returning
+text/event-stream, EventSource cannot consume). Rather than
+shipping two hooks or a polyfill that fakes EventSource over
+POST, the hook is a 100-line wrapper around `fetch` +
+`ReadableStream.getReader()` for both cases. fetch handles GET
+and POST identically; the response body's ReadableStream is the
+same shape either way. Native APIs, no dependencies, debuggable
+end-to-end. The hook surfaces `{events, status, error, start,
+reset}` as React state so pages can either iterate `events` for
+rendering or attach an `onEvent` callback for side effects.
+
+*shadcn components written by hand, not via the interactive CLI.*
+`npx shadcn@latest init` and `add` are interactive — they prompt
+for framework, style, base color, paths. Running them in Docker
+non-interactively is possible with flags but brittle across
+shadcn CLI versions. The components themselves are public-domain
+templates (~40-100 lines each, mostly Radix wrappers). Writing
+the eight needed components (Button, Card, Progress, Badge,
+Textarea, Input, Table, Dialog) by hand once is faster than
+fighting CLI interaction in the container, and the
+`components.json` config is present so future `shadcn add` works
+when we need more.
+
+*Frontend has its own image (node:20-alpine), bind-mount + anon
+volume for node_modules.* The frontend toolchain shares zero
+deps with the Python pipeline — separate image. The bind-mount
+delivers Vite HMR (edit .tsx on host, browser reloads in <1s).
+The anonymous volume on `/app/node_modules` is the canonical
+trick that prevents the host's empty or platform-mismatched
+node_modules from shadowing the container's at startup. Without
+it, the first compose run after `docker compose build frontend`
+would fail to find React.
+
+*Pages never call `fetch()` or instantiate `EventSource`
+directly.* All backend calls go through `src/lib/api.ts`; all
+SSE consumption through `useSSE`. Pages import typed functions
+and typed event types. This makes the type surface honest (one
+place to follow when the backend shape changes) and creates the
+seam future tests would need (mock api.ts, render the page).
+The frontend/CLAUDE.md spells this out as a hard rule.
+
+*Verbose provenance is mandated at the convention level, not the
+component level.* `frontend/CLAUDE.md` declares that AnswerCard
+must render every source chunk with source_file + row + score by
+default — no hover-to-reveal, no "summary score" hiding the
+trace. Active memory `feedback-show-provenance` and
+LEARNING_NOTES entry 12 made this load-bearing; codifying it in
+the layer's CLAUDE.md means future contributors don't re-discover
+the requirement from feature requests. Same shape for the
+cross-tenant-leakage warning: `mentioned_clients` non-empty →
+visible warning Badge before the action buttons.
+
+*localStorage for session_id, scoped per workflow.* Each
+workflow stores its session_id in localStorage under
+`rfi.ingest.session_id` / `rfi.answer.session_id`. On completion
+or "start over", the key clears. The session_id is per-tab
+capability state (see api/CLAUDE.md: NOT auth), so localStorage
+is fine — there is no persistence requirement beyond surviving
+a page reload, and the backend's 24h TTL bounds the worst case.
+Cookies would work too but would interact with deployment-time
+proxy/SSO and aren't worth the complexity for the same outcome.
+
+**Verification.** `docker compose build frontend` succeeded
+(image based on node:20-alpine, all npm deps resolved without
+peer warnings). `docker compose up frontend` started Vite on
+:3000 with HMR. Browser visits:
+
+  http://localhost:3000/         -> Landing stub renders
+  http://localhost:3000/ingest   -> Ingest stub renders
+  http://localhost:3000/answer   -> Answer stub renders
+
+All three routes render the header nav, the workflow card, and
+the routing chrome with no console errors. Tailwind classes
+apply (the cards have the shadcn border/shadow/spacing).
+Imports from `@/components/ui/*` and `@/pages/*` resolve via
+the TS path alias.
+
+**What it teaches.**
+
+The scaffold is ~25 files, but they're each small and they're
+all *boundary* code: config that wires the toolchain, typed
+wrappers, primitive components, CLAUDE.md conventions. Zero
+business logic landed here. That separation is deliberate: by
+the time Step 7 starts (Landing page content), the scaffold is
+frozen and the work is purely composition. If the scaffold had
+mixed in a Dropzone component for ingest or an AnswerCard for
+answers, Step 6's commit would have been impossible to review —
+"what's setup vs. what's the actual landing page?" Splitting
+scaffold-only into its own commit makes the next steps land
+cleanly as "feature-N on top of frozen scaffold".
+
+The generalisation: when starting a new layer, the FIRST commit
+should be 100% scaffold + conventions, ZERO business logic. The
+next commits then have a stable surface to build on. Mixing
+"set up the framework AND build the first feature" in a single
+commit creates a commit that is too big to review and that
+nobody can untangle later when one of the two halves needs to
+change in isolation.
+
+

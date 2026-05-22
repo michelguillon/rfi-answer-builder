@@ -61,3 +61,32 @@ services:
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
     ports:
       - "8000:8000"
+
+  # ARCHITECTURAL DECISION: frontend uses its own image (node-alpine),
+  # bind-mounts ./frontend over /app, AND keeps an anonymous volume for
+  # /app/node_modules.
+  #
+  # Three reasons. (1) The frontend toolchain (Vite, TS, Tailwind, shadcn
+  # primitives) shares zero dependencies with the Python pipeline — they
+  # belong in separate images. (2) The bind-mount delivers Vite's HMR
+  # — edit .tsx on the host, browser reloads in <1s. (3) Without the
+  # anonymous volume on /app/node_modules, the host's empty (or
+  # platform-mismatched) node_modules would shadow the container's,
+  # breaking `import` resolution at startup. The anon volume is the
+  # canonical trick for "bind-mount source, isolate node_modules".
+  #
+  # VITE_API_URL points at the backend by compose service name; Vite's
+  # dev proxy (vite.config.ts) forwards /api/* there. From the browser
+  # the frontend is at http://localhost:3000 and /api/* travels:
+  #   browser -> frontend:3000 -> Vite proxy -> backend:8000.
+  frontend:
+    build: ./frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
