@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, FileSpreadsheet, Database } from "lucide-react";
+import {
+  ArrowRight,
+  Database,
+  FileSpreadsheet,
+  Loader2,
+  Trash2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,14 +16,33 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { getCorpusStats, type CorpusStats } from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { deleteRfi, getCorpusStats, type CorpusStats } from "@/lib/api";
 
 export default function Landing() {
   const [stats, setStats] = useState<CorpusStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setStats(null);
+    setStatsError(null);
     getCorpusStats()
       .then((s) => {
         if (!cancelled) setStats(s);
@@ -28,7 +53,7 @@ export default function Landing() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   return (
     <div className="space-y-10">
@@ -60,7 +85,11 @@ export default function Landing() {
         />
       </div>
 
-      <StatsFooter stats={stats} error={statsError} />
+      <CorpusPanel
+        stats={stats}
+        error={statsError}
+        onReload={() => setReloadKey((k) => k + 1)}
+      />
     </div>
   );
 }
@@ -101,49 +130,178 @@ function WorkflowCard({
   );
 }
 
-function StatsFooter({
+function CorpusPanel({
   stats,
   error,
+  onReload,
 }: {
   stats: CorpusStats | null;
   error: string | null;
+  onReload: () => void;
 }) {
-  // Empty-corpus and pre-load states both render quietly — the
-  // Landing page is the entry point and shouldn't push errors at
-  // the user if the corpus simply isn't ingested yet.
   if (error) {
     return (
-      <div className="text-center text-sm text-muted-foreground border-t pt-6">
-        Corpus stats unavailable — likely no RFIs ingested yet.{" "}
-        <Link to="/ingest" className="underline hover:text-foreground">
-          Add your first RFI
-        </Link>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Corpus</CardTitle>
+          <CardDescription>
+            Corpus stats unavailable — likely no RFIs ingested yet.{" "}
+            <Link to="/ingest" className="underline hover:text-foreground">
+              Add your first RFI
+            </Link>
+          </CardDescription>
+        </CardHeader>
+      </Card>
     );
   }
   if (!stats) {
     return (
-      <div className="text-center text-sm text-muted-foreground border-t pt-6">
-        Loading corpus stats…
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Corpus</CardTitle>
+          <CardDescription>Loading corpus stats…</CardDescription>
+        </CardHeader>
+      </Card>
     );
   }
   return (
-    <div className="border-t pt-6 text-center">
-      <p className="text-sm text-muted-foreground">
-        Corpus: <strong className="text-foreground">{stats.total_pairs.toLocaleString()}</strong>{" "}
-        Q&amp;A pairs across{" "}
-        <strong className="text-foreground">{stats.source_files}</strong>{" "}
-        source RFI{stats.source_files === 1 ? "" : "s"}
-      </p>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Corpus</CardTitle>
+        <CardDescription>
+          <strong className="text-foreground">
+            {stats.total_pairs.toLocaleString()}
+          </strong>{" "}
+          Q&amp;A pairs across{" "}
+          <strong className="text-foreground">{stats.source_files}</strong>{" "}
+          source RFI{stats.source_files === 1 ? "" : "s"}.
+        </CardDescription>
+      </CardHeader>
       {stats.files.length > 0 && (
-        <p
-          className="text-xs text-muted-foreground/80 mt-2 max-w-2xl mx-auto truncate"
-          title={stats.files.join("\n")}
-        >
-          {stats.files.join(" · ")}
-        </p>
+        <CardContent>
+          <CorpusTable files={stats.files} onChanged={onReload} />
+        </CardContent>
       )}
-    </div>
+    </Card>
+  );
+}
+
+function CorpusTable({
+  files,
+  onChanged,
+}: {
+  files: CorpusStats["files"];
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const onConfirmDelete = async () => {
+    if (!confirming) return;
+    setDeleting(confirming);
+    setDeleteError(null);
+    try {
+      await deleteRfi(confirming);
+      setConfirming(null);
+      onChanged();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  return (
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Source RFI</TableHead>
+            <TableHead className="w-24 text-right">Q&amp;A pairs</TableHead>
+            <TableHead className="w-12" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {files.map((f) => (
+            <TableRow key={f.source_file}>
+              <TableCell
+                className="font-mono text-xs truncate max-w-md"
+                title={f.source_file}
+              >
+                {f.source_file}
+              </TableCell>
+              <TableCell className="text-right font-mono text-xs">
+                {f.chunks.toLocaleString()}
+              </TableCell>
+              <TableCell className="text-right">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setDeleteError(null);
+                    setConfirming(f.source_file);
+                  }}
+                  aria-label={`Delete ${f.source_file}`}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(open) => !open && setConfirming(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove from corpus?</DialogTitle>
+            <DialogDescription>
+              <span className="font-mono text-xs block mt-1 mb-3 truncate">
+                {confirming}
+              </span>
+              This removes the RFI's chunks from all four ChromaDB
+              collections and deletes its{" "}
+              <span className="font-mono">config_rfi_*.json</span>. The
+              uploaded <span className="font-mono">.xlsx</span> stays in{" "}
+              <span className="font-mono">data/</span> in case you want to
+              re-upload later. Cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <p className="text-sm text-destructive">{deleteError}</p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirming(null)}
+              disabled={deleting !== null}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onConfirmDelete}
+              disabled={deleting !== null}
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-1 h-4 w-4" />
+                  Delete
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

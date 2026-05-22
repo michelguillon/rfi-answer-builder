@@ -2503,3 +2503,147 @@ need to be read independently. Convention pays for itself the
 second time it's followed.
 
 
+## 25. UI Step 9.5 — Delete an RFI from the corpus
+
+**Why this step exists.** Not in SPEC_UI's nine ordered steps,
+but added after the user's "will we be able to delete a specific
+fake RFI from the database post upload?" — a question that
+exposed a real gap: a user testing the ingest workflow with a
+throwaway file had no UI affordance to clean up afterwards.
+Without delete, the only escape was `python -m pipeline.ingest
+--reset` which nukes EVERYTHING. This step adds the precise
+primitive: "delete one RFI".
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Delete removes chunks + checkpoint + config, but KEEPS the
+data/<filename>.xlsx upload on disk.* The user's intent is
+"remove from corpus" — that's the chunks. Removing the
+checkpoint entries prevents a future `python -m pipeline.ingest`
+from re-adding what the user just deleted. Removing the
+config_rfi_<slug>.json prevents the CLI from even SEEING the
+RFI as ingestable (load_all_rows() globs configs). The data
+file is small, harmless, and might be wanted again — keeping
+it lets the user re-upload via the UI without losing the bytes.
+
+An `?also_delete_file=1` query param could nuke the data file
+too. Not added today because nobody is asking and the minimal
+version is less destructive. The shape "delete is the user's
+intent expressed in code" wins over "delete is whatever
+clear-corpus means today".
+
+*Extend GET /api/corpus/stats to return per-file chunk counts,
+don't add a separate /list endpoint.* The Landing page now
+needs richer per-file data (chunks count for display) but the
+shape "give me corpus state" is one logical concept. Splitting
+into /stats (totals) + /list (per-file) would mean two HTTP
+calls on Landing for what is one user-facing question. The
+upgrade from `files: string[]` to `files: {source_file,
+chunks}[]` is a breaking change to the prior schema, BUT this
+is a single-deployment private project — no external consumer
+of the API exists to break. Clean cut.
+
+*Delete validates source_file against path-traversal characters
+("/", "\\") at the boundary.* The endpoint takes a free-text
+query param and feeds it to file/glob operations
+(config_rfi_<slug>.json deletion, ChromaDB metadata match).
+Without the validation, a malicious source_file like
+"../../etc/passwd" wouldn't actually escape (the slug
+derivation strips non-alphanumerics so the resulting unlink
+target would be path-safe), but defending at the boundary is
+cheaper than auditing every downstream path. Two characters'
+worth of checks, no performance cost, plus the explicit 400
+error makes debugging clearer than a silent no-op.
+
+*The confirm Dialog is mandatory; no "are you sure?"-bypassing
+modifier-click shortcut.* Delete is destructive and irreversible
+(the chunks would need to be re-embedded from the original Excel
+to come back, costing a Mistral round trip per pair). A
+"power user" shortcut that bypasses the confirm would optimise
+for the wrong action — accidentally deleting a 140-pair RFI
+because the click landed on the wrong row is much worse than
+clicking through one extra dialog. The dialog text spells out
+what stays vs what goes ("data/<x>.xlsx stays in case you want
+to re-upload") so the user reads what they're committing to.
+
+*The Landing page reloads stats by bumping a `reloadKey`
+useState that drives a useEffect dep array, not by re-calling
+getCorpusStats() directly from the delete handler.* The pattern
+"increment a key to re-run an effect" is the React-idiomatic
+way to express "refetch after this action". The alternative
+(call getCorpusStats() inline) would mean the loading state
+isn't shown during the refetch — the table would just freeze
+on the old data until the new arrives. With the key-bump
+pattern, the table goes to loading state cleanly because the
+effect's start sets `stats` back to null first.
+
+**Verification.** Tested against a real test artifact the user
+left in the corpus during Step 8 verification
+(`FakeGuardian_RFI_Duplicate_Testing.xlsx`):
+
+  GET /api/corpus/stats  (before)
+    -> total_pairs: 329, source_files: 5, files: [5 entries
+                     including FakeGuardian...]
+
+  DELETE /api/corpus/rfi?source_file=FakeGuardian_RFI...
+    -> {chunks_removed: {
+           rfi_combined_cosine: 50,
+           rfi_combined_l2: 50,
+           rfi_separated_cosine: 100,
+           rfi_separated_l2: 100
+        },
+        total_chunks_removed: 300,
+        checkpoint_entries_removed: 4,
+        config_removed: true,
+        config_path: "config_rfi_fakeguardian_rfi_duplicate_testing.json"}
+
+  Chunk math checks out: 50 rows in the file × 1 chunk/row in
+  combined collections = 50 chunks; × 2 chunks/row in separated
+  (question + answer) = 100. Both confirmed.
+
+  GET /api/corpus/stats  (after)
+    -> total_pairs: 279, source_files: 4, files: [4 entries —
+                     production corpus, FakeGuardian gone]
+
+  Frontend Vite-compiles all four changed files (Landing.tsx,
+  dialog.tsx, api.ts, plus the unchanged components) with no
+  errors.
+
+Browser interaction (clicking the trash button, seeing the
+Dialog, confirming, watching the table refresh) was NOT
+verified in this environment per the standing
+headless-browser caveat. The user should sanity-check that
+flow manually.
+
+**What it teaches.**
+
+The delete feature ended up at ~150 LOC across backend (90)
+and frontend (60). Most of that is the Dialog confirmation
+boilerplate; the actual deletion logic is a 20-line loop over
+COLLECTIONS calling `coll.delete(where={"source_file": X})`.
+The smallness is a direct consequence of two earlier decisions:
+
+  1. Ingest stamps every chunk with `source_file` metadata
+     (entry 9). Delete is just the inverse query.
+  2. The disk format chain
+     (config_rfi_*.json + outputs/.ingest_checkpoint.json) is
+     stable enough that a delete operation knows exactly which
+     files to touch.
+
+Without those, delete would have been a hairier operation —
+walking chunks by ID, reconstructing what to delete from
+opaque pair_id parsing, etc. With them, it's a one-liner in
+ChromaDB plus the obvious filesystem cleanup. The corpus
+contract from entry 18 ("the disk format IS the interface")
+keeps paying out on operations beyond the original ingest +
+query flow.
+
+Generalised: when designing an immutable-write-and-query
+system, plan for the inverse operation too. The shape that
+makes inserts fast and queries good is usually the shape that
+makes targeted deletes possible. Add the metadata stamp at
+insert time and the delete-by-stamp operation is free; skip
+it and the delete operation becomes its own engineering
+project.
+
+

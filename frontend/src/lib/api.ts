@@ -86,10 +86,24 @@ export interface EditResponse {
   session_id: string;
 }
 
+export interface CorpusFile {
+  source_file: string;
+  chunks: number;
+}
+
 export interface CorpusStats {
   total_pairs: number;
   source_files: number;
-  files: string[];
+  files: CorpusFile[];
+}
+
+export interface DeleteRfiResponse {
+  source_file: string;
+  total_chunks_removed: number;
+  chunks_removed: Record<string, number>;
+  checkpoint_entries_removed: number;
+  config_removed: boolean;
+  config_path: string;
 }
 
 // ── SSE event union types ──────────────────────────────────────────────
@@ -137,6 +151,16 @@ export async function createSession(): Promise<SessionCreated> {
 export async function getCorpusStats(): Promise<CorpusStats> {
   const res = await fetch("/api/corpus/stats");
   return handleJson<CorpusStats>(res);
+}
+
+export async function deleteRfi(
+  sourceFile: string,
+): Promise<DeleteRfiResponse> {
+  const res = await fetch(
+    `/api/corpus/rfi?source_file=${encodeURIComponent(sourceFile)}`,
+    { method: "DELETE" },
+  );
+  return handleJson<DeleteRfiResponse>(res);
 }
 
 export async function uploadIngest(
