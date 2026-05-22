@@ -2350,3 +2350,156 @@ particular — will follow the same shape because the
 underlying SSE-driven nature is the same shape.
 
 
+## 24. UI Step 9 — Answer workflow (per-question SSE + review + export)
+
+**SPEC_UI Step 9 deliverable.** The other interactive flow, and
+the one the CPO singled out as load-bearing because of the
+verbose provenance (LEARNING_NOTES entry 12). Upload a new client
+RFI; the backend extracts questions; the SSE stream emits one
+`answer` event per question with the full retrieval trace;
+AnswerCards stack as they arrive with Accept / Edit / Skip
+controls. When the stream completes, a Review section renders a
+status table and the ExportButton.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Cards stack and become interactive as they arrive, not at the
+end of the stream.* The SSE design (entries 17 + 19) was built
+around streaming-not-batching specifically so a long RFI
+doesn't keep the user waiting for the whole list before they
+can act. The frontend honours that: the moment an `answer`
+event lands, its card appears with full controls. The user can
+Edit Q3 while Q15 is still generating in the background. This
+is the difference between "watch a progress bar for 5 minutes"
+and "review answers as they're produced", and it changes the
+felt cost of the workflow by an order of magnitude.
+
+*Per-card state is page-local, keyed by question index, NOT
+sent to the backend until export time.* During the streaming
+phase, every Accept / Skip / Edit is a local state mutation.
+The backend doesn't learn about it until the user clicks the
+Download button, at which point ExportButton POSTs the
+collected overrides + skipped to `/api/answer/edit` and then
+GETs `/api/answer/export`. Sending each click to the backend
+in real time would add round-trips for state the user might
+change again before exporting (Accept then Edit then Skip).
+Buffering on the client is simpler and the backend's
+single-write-on-disk-then-export shape matches it.
+
+*`pending` is tracked explicitly even though the backend
+treats `pending` and `accepted` identically.* On the wire,
+neither pending nor accepted appears in the export body
+(both fall through to "write the generated answer"). The
+UI distinguishes them so the review table can show
+"3 still pending review" — a user who streamed 28 answers
+and reviewed 25 of them sees that 3 are unreviewed before
+clicking download. The backend-equivalence stays clean; the
+UI adds the bookkeeping that helps the human.
+
+*Refused answers ("I cannot find this in our corpus.") get a
+`no corpus match` badge but no automatic skip.* A refusal IS
+the answer the system produced; the reviewer might choose to
+let it land in the export ("we don't have anything for this,
+the human will draft it"), accept it as-is, edit it into a
+manual draft, or skip it. All four are valid. Auto-skipping
+refusals would foreclose the "let the refusal land so we know
+we owe a manual answer" pattern. The badge surfaces the state;
+the user decides.
+
+*The Source list is collapsible per source, NOT collapsed by
+default at the source-list level.* Every retrieved chunk's
+filename + row + score is visible on the card without
+expansion (that's the verbose-provenance mandate). Clicking a
+specific source row expands to show its question_text +
+answer_text inline — the underlying past Q&A. Two levels of
+visibility: "what's the trace" at glance, "what did the chunks
+actually say" on demand. The opposite shape (whole sources
+list collapsed behind "show details") would hide the trace by
+default, defeating the purpose. The current shape is the
+narrowest disclosure pattern that still lets the user verify
+chunks without flooding the page.
+
+*Cross-tenant warning renders BEFORE the action buttons, in a
+high-contrast yellow panel.* When the answer mentions a past
+client by name (`mentioned_clients` non-empty from the backend
+word-boundary regex per entry 19), the warning is in the
+card's flow above the buttons. The user cannot click Accept
+without seeing it. Position matters here: a warning rendered
+below the buttons, or as a tooltip on a Badge, would be
+trivially missable. The visual weight (yellow border-left, the
+AlertTriangle icon, plain English explanation) intentionally
+breaks the card's visual rhythm.
+
+*ExportButton uses `window.location.href` for the download,
+not fetch + Blob + anchor.* The backend's FileResponse sets
+Content-Disposition: attachment. In every modern browser,
+navigating to a URL with that header triggers a download
+without unloading the current page — the React app keeps
+running. Fetch + Blob would re-stream the bytes through
+JavaScript memory unnecessarily, which is wasteful for any
+file size and would prevent the browser's built-in download
+manager UI from appearing.
+
+*The Review table appears UNDER the cards, not replacing them.*
+When the done event arrives, the page doesn't transition to a
+new "review" view; it appends a Review section to the existing
+cards. The user can scroll up to re-edit a card after seeing
+the summary. Replacing the cards with a table would make the
+common case "I want to revise an edit I made earlier" require
+navigating back through state.
+
+**Verification.** Three TSX files compile via Vite without
+errors:
+
+  /src/components/AnswerCard.tsx     OK 47 856 bytes compiled
+  /src/components/ExportButton.tsx   OK  9 115 bytes compiled
+  /src/pages/Answer.tsx              OK 70 282 bytes compiled
+
+Backend SSE shape consumed by this page (`/api/answer/process`)
+was end-to-end verified in Step 4, including the
+cross-tenant-leakage flags that this UI surfaces.
+
+Interactive flow NOT verified — same headless-browser caveat
+as Steps 7 and 8. Recommended manual check: upload a fresh
+.xlsx via /answer, wait for several answers to arrive, try
+Accept on one, Edit on another (verify textarea editable +
+Save persists), Skip on a third. After done event arrives,
+the Review section should show all status badges including
+"cross-tenant" outline badges where appropriate, and the
+download should produce an .xlsx with the three exporter
+columns.
+
+**What it teaches.**
+
+The pattern that emerged across Steps 6-9 is consistent enough
+to name:
+
+  1. Page owns state + transitions (the controller).
+  2. Lib owns typed wrappers + SSE hook (the model).
+  3. Components are presentational — they take props and
+     render JSX (the view).
+
+Within the page, the order is also consistent:
+
+  1. useState for primary state
+  2. useSSE for streams
+  3. useMemo for derived values from event arrays
+  4. useEffect for one-shot side effects (mount clears,
+     state seeding)
+  5. Named callback handlers for transitions
+  6. JSX tree that calls the named callbacks
+
+When you follow this shape, the Ingest page and the Answer
+page end up structured identically even though they do
+different things. That's not by accident — it's because both
+pages are SSE-driven wizards on top of a typed FastAPI
+backend, and the shape FITS that problem. A reader who
+understands one understands both immediately.
+
+The contrast: had we written each page as ad-hoc fetches with
+inline async/await in onClicks, the two pages would have
+diverged into "two custom-grown things" and each one would
+need to be read independently. Convention pays for itself the
+second time it's followed.
+
+
