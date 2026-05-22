@@ -1,8 +1,9 @@
-"""api.routers.answer — upload + process (SSE) + export (Step 5).
+"""api.routers.answer — upload + process (SSE) + edit + export.
 
   POST /api/answer/upload?session_id=...     save Excel + extract questions
   GET  /api/answer/process?session_id=...    SSE stream of per-question answers
-  GET  /api/answer/export?session_id=...     (Step 5)
+  POST /api/answer/edit                      persist user edits/skips
+  GET  /api/answer/export?session_id=...     download the filled Excel
 """
 
 from __future__ import annotations
@@ -11,13 +12,20 @@ import asyncio
 import json
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 from api.services.answerer import (
     QUESTIONS_FILENAME,
     UPLOAD_FILENAME,
     extract_questions,
     run_answer,
+)
+from api.services.exporter import ORIGINAL_NAME_FILENAME
+from api.services.exporter import (
+    build_output,
+    get_download_name,
+    update_answers_inplace,
 )
 from api.session import get_session_dir
 
@@ -67,6 +75,13 @@ async def upload(
     contents = await file.read()
     upload_path.write_bytes(contents)
 
+    # Persist the original filename so the export endpoint can name
+    # the download "<stem>_answered.xlsx". Same pattern as the ingest
+    # upload — keeps the backend authoritative on filenames.
+    (session_dir / ORIGINAL_NAME_FILENAME).write_text(
+        file.filename, encoding="utf-8"
+    )
+
     try:
         extracted = await asyncio.to_thread(extract_questions, upload_path)
     except ValueError as exc:
@@ -101,8 +116,8 @@ async def process(session_id: str = Query(...)) -> StreamingResponse:
 
     Yields progress, answer, done. On error yields a single error
     event and closes the stream. The full answers list is persisted
-    to tmp/{session_id}/answers.json on done — Step 5's export
-    endpoint reads it.
+    to tmp/{session_id}/answers.json on done — the export endpoint
+    reads it.
     """
     session_dir = get_session_dir(session_id)
 
@@ -114,4 +129,70 @@ async def process(session_id: str = Query(...)) -> StreamingResponse:
         stream(),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
+    )
+
+
+# ARCHITECTURAL DECISION: edits are POSTed as their own step; the
+# export endpoint stays a plain GET.
+#
+# SPEC_UI Step 9's ExportButton calls "POST edits to backend then
+# GET /api/answer/export, trigger browser download". A GET-only
+# download has two practical advantages over a POST that returns
+# the file:
+#   - Browsers handle GET downloads cleanly (history, retry, file
+#     name from Content-Disposition).
+#   - The exporter reads its inputs entirely from disk
+#     (answers.json with _status flags set by /edit), so the export
+#     can be re-run idempotently without re-sending the edits.
+#
+# The edit step persists per-answer _status into answers.json:
+#   - "edited":   answer text replaced
+#   - "skipped":  cells will be blank in the export
+#   - "accepted" (default): write generated answer as-is
+# After /edit, the answers.json on disk is the single source of
+# truth — the export reads it once.
+class EditBody(BaseModel):
+    """Body of POST /api/answer/edit.
+
+    `overrides` maps the answer's `index` (1-based, matches the
+    progress/answer SSE events) to the user's edited text.
+    `skipped` lists indices the user explicitly skipped. Indices
+    not in either list keep their original generated answer.
+    """
+
+    session_id: str
+    overrides: dict[int, str] = {}
+    skipped: list[int] = []
+
+
+@router.post("/edit")
+async def edit(body: EditBody) -> dict:
+    """Persist the user's per-answer edits and skips into answers.json."""
+    session_dir = get_session_dir(body.session_id)
+    try:
+        modified = await asyncio.to_thread(
+            update_answers_inplace, session_dir, body.overrides, body.skipped
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    return {"modified": modified, "session_id": body.session_id}
+
+
+@router.get("/export")
+async def export(session_id: str = Query(...)) -> FileResponse:
+    """Build (or rebuild) output.xlsx and stream it as a download."""
+    session_dir = get_session_dir(session_id)
+    try:
+        output_path = await asyncio.to_thread(build_output, session_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    download_name = get_download_name(session_dir)
+    return FileResponse(
+        path=str(output_path),
+        filename=download_name,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
     )

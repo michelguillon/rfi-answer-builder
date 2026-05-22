@@ -1845,3 +1845,144 @@ the wrapper's. The wrapper's job is to make the internals
 *available*.
 
 
+## 20. UI Step 5 — Excel exporter (filled RFI download)
+
+**SPEC_UI Step 5 deliverable.** The user has reviewed the
+streamed answers, edited some, skipped some, and clicks
+"Download filled RFI". The backend opens the original upload,
+appends three columns (Suggested Answer / Source RFIs /
+Confidence), and streams the file back as a `.xlsx` download.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*Open the workbook with `data_only=False` (the openpyxl default).*
+The profiler uses `data_only=True` to read formula *results* for
+column classification. The exporter does NOT read formula cells
+— it only appends NEW columns past the last existing one and
+writes their header + per-row text. Opening with `data_only=False`
+preserves formulas, formatting, merged cells, validation rules,
+and conditional formatting in the existing columns. We do not
+touch them. The user's original RFI looks unchanged except for
+the three new columns at the end.
+
+What openpyxl cannot preserve through a round-trip: VBA macros
+(.xlsm files re-saved as .xlsx drop them), embedded charts in
+certain shapes, ActiveX controls. RFI files are typically plain
+Q&A tables so this is a non-issue in practice. Documented as a
+caveat in the service docstring; if a future RFI ships with
+critical macros, the workaround is to copy the new columns into
+the original file by hand.
+
+*Two-step edit-then-export, not a POST that returns the file.*
+SPEC_UI Step 9's ExportButton specifies "POST edits to backend
+then GET /api/answer/export, trigger browser download". The GET
+download has two practical advantages over a POST that returns
+the file:
+
+  - Browsers handle GET downloads cleanly (history, retry, file
+    name from Content-Disposition).
+  - The exporter reads all inputs from disk
+    (`answers.json` with `_status` flags set by `/edit`), so
+    the export is idempotent — re-running it produces the same
+    output without the frontend re-sending the edits.
+
+The edit step persists `_status` per answer:
+
+  - "accepted" (default): write generated answer + sources + confidence
+  - "edited": answer text replaced, refused flag cleared
+  - "skipped": all three new columns set to None (blank in Excel)
+
+After `/edit`, `answers.json` on disk is the single source of
+truth. The export reads it once. Re-running `/export` without
+intervening edits returns the same bytes (modulo openpyxl's
+internal ordering — close enough for hashing purposes).
+
+*Refusal text lands in the cell, not blank; skip lands blank.*
+When the generator refuses ("I cannot find this in our
+corpus."), that *is* the answer the system produced — it's
+load-bearing information for the reviewer ("we don't have
+anything to say here, you'll need to draft this manually").
+Leaving the cell blank would hide the refusal and make the row
+look like a system miss. Writing the refusal text into Suggested
+Answer keeps the audit trail intact.
+
+Skipped answers DO get a blank cell because the user has
+actively rejected the suggestion — the absence of content is the
+user's decision, not the system's silence. Refusal and skip are
+semantically different and the export distinguishes them.
+
+*Source RFI cell value is human-readable, pipe-separated.* The
+spec format is "<source_file> row <N>" joined with " | ". Source
+file is preserved verbatim from the chunk metadata
+(`Utiq_Publicis RFI.xlsx`). Row is extracted from the pair_id
+(`utiq_publicis_rfi_row_13` → `13`) with a regex against the
+project-wide convention `<slug>_row_<N>` defined in
+`pipeline.loaders.excel_loader`. If the regex misses, the full
+pair_id is written rather than dropping attribution silently —
+defensive against future pair_id format changes.
+
+*Confidence is the top-chunk crossencoder score, rounded to 2dp.*
+What lands in the cell is one float per row, e.g. `8.21`. The
+underlying score is the rerank score of the highest-ranked chunk
+that fed generation. A reviewer scanning the Confidence column
+can sort it in Excel to triage low-confidence answers first.
+Higher is better (crossencoder scoring).
+
+*Download filename = `<original_stem>_answered.xlsx`.* The
+original filename sidecar (`tmp/{sid}/original_filename`,
+written by both ingest AND answer upload — fixed during this
+step in the answer endpoint, which had been missing it) is read
+to produce a download name like `Utiq_Publicis RFI_answered.xlsx`.
+Without the sidecar, falls back to `output.xlsx`. FastAPI's
+`FileResponse(..., filename=...)` sets the `Content-Disposition`
+header so the browser saves under the right name automatically.
+
+**Verification.** Full edit-then-export run against the previous
+session's `tmp/{sid}/answers.json` (28 questions from
+`Utiq_Publicis RFI.xlsx`):
+
+  POST /api/answer/edit {overrides: {1: "EDITED: ..."}, skipped: [5, 10]}
+       -> {"modified": 3}
+
+  GET  /api/answer/export?session_id=...
+       -> 200 OK, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+       -> Content-Disposition: attachment; filename="Utiq_Publicis RFI_answered.xlsx"
+       -> 18,755 bytes
+
+  Opened in openpyxl:
+       max_column = 6 (was 3 before export: A=ignore, B=Company
+                       Overview, C=UTIQ response; new D=Suggested
+                       Answer, E=Source RFIs, F=Confidence)
+       Header row 12 carries the 3 new headers verbatim.
+       Edited idx=1 row=13: cell D13 starts with "EDITED: Utiq is..."
+       Skipped idx=5 row=21: D21/E21/F21 all blank.
+       Skipped idx=10 row=30: D30/E30/F30 all blank.
+       Accepted idx=2 row=15: confidence 8.21, sources pipe-list
+                              including "Utiq_Publicis RFI.xlsx row 15".
+
+**What it teaches.**
+
+The exporter is small (~200 lines) because the hard work was done
+upstream. Question extraction (Step 4) made `answers.json`
+carry pair_id, source_file, confidence, and row alongside each
+answer — the exporter is then a pure transform from that record
+into Excel cells. If question extraction had only persisted
+"answer text" without provenance, the exporter would have needed
+to redo retrieval at export time to populate Source RFIs.
+
+This is a recurring shape in this codebase: when each step
+persists every piece of state the NEXT step might want, the next
+step shrinks. The disk format (`profile.json` → `config.json` →
+`answers.json` → `output.xlsx`) is the actual interface; every
+step is a small function from one disk format to the next. This
+is what lets the UI ingest and CLI ingest share state cleanly
+(entry 18), and what made wrapping the pipeline for SSE possible
+without rewriting the pipeline (entries 17/18/19).
+
+If a future maintainer wonders "why is the answer.json shape so
+verbose, can we trim it?" — the answer is no. The exporter (and
+any future post-processing: redaction, format conversion, audit
+trail emission) reads from it. Trimming it would push work back
+into those downstream tools.
+
+
