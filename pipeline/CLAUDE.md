@@ -13,7 +13,7 @@ Every module under `pipeline/` is both:
 1. **Independently runnable as a CLI** —
    `docker compose run --rm cli python -m pipeline.profile data/foo.xlsx`.
    `argparse` + `if __name__ == "__main__":` blocks must stay intact;
-   the README, [SPEC_RFI_Standalone.md](../docs/SPEC_RFI_Standalone.md),
+   the README, [rfi_SPEC.md](../docs/rfi_SPEC.md),
    and the eval framework all depend on this surface.
 
 2. **Importable from outside the package** — `api/services/profiler.py`
@@ -32,7 +32,7 @@ The UI layer (`api/` + `frontend/`) wraps these modules without
 modifying their behaviour. Organisational moves (rename, split,
 relocate, signature tidy-ups) are fine; behavioural changes are
 not — they invalidate the production recommendation from
-[LEARNING_NOTES_RFI.md](../docs/LEARNING_NOTES_RFI.md) entry 13.
+[rfi_LEARNING_NOTES.md](../docs/rfi_LEARNING_NOTES.md) entry 13.
 
 If you find yourself wanting to change behaviour for a UI-driven
 reason (different default top-k, different chunking strategy,

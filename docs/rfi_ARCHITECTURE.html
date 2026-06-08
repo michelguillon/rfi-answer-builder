@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RFI Answer Builder — Architecture</title>
+<style>
+:root {
+  --bg: #f7f6f2; --card: #ffffff; --text: #1a1a18; --muted: #6b6b65;
+  --border: #e2e0d8; --tab-active: #1a1a18; --tab-hover: #f1efe8;
+  --purple-fill: #EEEDFE; --purple-stroke: #534AB7; --purple-text: #3C3489;
+  --teal-fill: #E1F5EE; --teal-stroke: #0F6E56; --teal-text: #085041;
+  --amber-fill: #FAEEDA; --amber-stroke: #854F0B; --amber-text: #633806;
+  --gray-fill: #F1EFE8; --gray-stroke: #5F5E5A; --gray-text: #444441;
+  --coral-fill: #FAECE7; --coral-stroke: #993C1D; --coral-text: #712B13;
+  --blue-fill: #EAF3FE; --blue-stroke: #1D5BA8; --blue-text: #153F78;
+  --arrow: #888780; --line: #C8C6BC;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a18; --card: #232320; --text: #e8e6df; --muted: #9c9a92;
+    --border: #333330; --tab-active: #e8e6df; --tab-hover: #2c2c2a;
+    --purple-fill: #26215C; --purple-stroke: #AFA9EC; --purple-text: #CECBF6;
+    --teal-fill: #04342C; --teal-stroke: #5DCAA5; --teal-text: #9FE1CB;
+    --amber-fill: #412402; --amber-stroke: #EF9F27; --amber-text: #FAC775;
+    --gray-fill: #2C2C2A; --gray-stroke: #B4B2A9; --gray-text: #D3D1C7;
+    --coral-fill: #4A1B0C; --coral-stroke: #F0997B; --coral-text: #F5C4B3;
+    --blue-fill: #0D2545; --blue-stroke: #6BAEF5; --blue-text: #A8CEFA;
+    --arrow: #888780; --line: #444440;
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Georgia', serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+.header { padding: 32px 48px 0; border-bottom: 1px solid var(--border); }
+.header h1 { font-size: 22px; font-weight: 400; letter-spacing: -0.3px; margin-bottom: 4px; }
+.header p { font-size: 13px; color: var(--muted); margin-bottom: 0; }
+.tabs { display: flex; gap: 0; padding: 0 48px; border-bottom: 1px solid var(--border); margin-top: 0; overflow-x: auto; }
+.tab { padding: 14px 20px; font-size: 13px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.15s; }
+.tab:hover { color: var(--text); background: var(--tab-hover); }
+.tab.active { color: var(--tab-active); border-bottom-color: var(--tab-active); font-weight: 600; }
+.content { padding: 40px 48px; max-width: 980px; }
+.panel { display: none; }
+.panel.active { display: block; }
+h2 { font-size: 20px; font-weight: 400; margin-bottom: 8px; letter-spacing: -0.3px; }
+h3 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 32px 0 12px; }
+p { font-size: 15px; line-height: 1.7; color: var(--muted); margin-bottom: 16px; max-width: 680px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 28px; margin-bottom: 32px; overflow: hidden; }
+svg { width: 100%; display: block; }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.legend-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+.decision { border-left: 3px solid var(--purple-stroke); padding: 12px 16px; margin-bottom: 16px; background: var(--purple-fill); border-radius: 0 6px 6px 0; }
+.decision strong { font-size: 13px; color: var(--purple-text); display: block; margin-bottom: 4px; }
+.decision span { font-size: 13px; color: var(--muted); line-height: 1.6; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 24px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); line-height: 1.5; vertical-align: top; }
+td:first-child { font-family: 'Courier New', monospace; font-size: 12px; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h2 style="font-size:11px;font-weight:400;text-transform:uppercase;letter-spacing:2px;color:var(--muted);margin-bottom:6px;">RFI Answer Builder</h2>
+  <h1>Architecture Reference</h1>
+  <p>CLI pipeline + web application. Production-deployed on home server behind Cloudflare Tunnel.</p>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="show('overview')">Overview</div>
+  <div class="tab" onclick="show('technical')">Technical</div>
+  <div class="tab" onclick="show('functional')">Functional</div>
+  <div class="tab" onclick="show('journeys')">User Journeys</div>
+  <div class="tab" onclick="show('principles')">Design Principles</div>
+</div>
+
+<div class="content">
+
+<!-- ═══════════════════════════════════ OVERVIEW ═══════════════════════════════════ -->
+<div class="panel active" id="overview">
+  <h2>What this system is</h2>
+  <p>A document intelligence system that ingests past RFI Excel files — each with a different schema — builds a searchable corpus of Q&A pairs, and drafts answers to new client RFIs with full source provenance. The retrieval architecture is the product; the draft answer is the output.</p>
+
+  <div class="card">
+    <svg viewBox="0 0 760 300">
+      <defs>
+        <marker id="ov-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+
+      <!-- Input -->
+      <rect x="10" y="90" width="130" height="120" rx="8" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="75" y="116" text-anchor="middle" font-family="Georgia,serif" font-size="12" fill="var(--gray-text)" font-weight="600">Inputs</text>
+      <text x="75" y="136" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Past RFI Excel files</text>
+      <text x="75" y="152" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">(inconsistent schemas)</text>
+      <text x="75" y="172" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">New client RFI</text>
+      <text x="75" y="188" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">RFI questions</text>
+
+      <line x1="140" y1="150" x2="180" y2="150" stroke="var(--arrow)" stroke-width="1" marker-end="url(#ov-arr)"/>
+
+      <!-- System boundary -->
+      <rect x="180" y="20" width="380" height="260" rx="12" fill="none" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="6 3"/>
+      <text x="370" y="44" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)" letter-spacing="2">SYSTEM BOUNDARY</text>
+
+      <!-- Schema discovery -->
+      <rect x="198" y="58" width="152" height="58" rx="7" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="274" y="80" text-anchor="middle" font-family="Georgia,serif" font-size="12" fill="var(--teal-text)" font-weight="600">Schema Discovery</text>
+      <text x="274" y="97" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">heuristic → LLM → validator</text>
+      <text x="274" y="111" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">→ human approval</text>
+
+      <!-- Corpus -->
+      <rect x="198" y="136" width="152" height="58" rx="7" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="274" y="158" text-anchor="middle" font-family="Georgia,serif" font-size="12" fill="var(--amber-text)" font-weight="600">Corpus</text>
+      <text x="274" y="175" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">ChromaDB · 4 collections</text>
+      <text x="274" y="191" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">1,646 chunks</text>
+
+      <!-- Retrieval + generation -->
+      <rect x="198" y="214" width="152" height="52" rx="7" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="274" y="235" text-anchor="middle" font-family="Georgia,serif" font-size="12" fill="var(--purple-text)" font-weight="600">Retrieval + Draft</text>
+      <text x="274" y="252" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">semantic · hybrid · rerank</text>
+      <text x="274" y="263" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">Mistral generation</text>
+
+      <!-- Web UI -->
+      <rect x="378" y="100" width="162" height="110" rx="7" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="459" y="124" text-anchor="middle" font-family="Georgia,serif" font-size="12" fill="var(--coral-text)" font-weight="600">Web UI</text>
+      <text x="459" y="142" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">React + FastAPI + SSE</text>
+      <text x="459" y="158" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">Ingest workflow</text>
+      <text x="459" y="174" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">Answer workflow</text>
+      <text x="459" y="190" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">HITL review + export</text>
+
+      <line x1="350" y1="87" x2="378" y2="130" stroke="var(--arrow)" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ov-arr)"/>
+      <line x1="350" y1="165" x2="378" y2="155" stroke="var(--arrow)" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ov-arr)"/>
+      <line x1="350" y1="240" x2="378" y2="190" stroke="var(--arrow)" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#ov-arr)"/>
+
+      <line x1="560" y1="155" x2="600" y2="155" stroke="var(--arrow)" stroke-width="1" marker-end="url(#ov-arr)"/>
+
+      <!-- Output -->
+      <rect x="600" y="90" width="140" height="130" rx="8" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="670" y="116" text-anchor="middle" font-family="Georgia,serif" font-size="12" fill="var(--gray-text)" font-weight="600">Outputs</text>
+      <text x="670" y="136" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Draft answers</text>
+      <text x="670" y="152" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Source provenance</text>
+      <text x="670" y="168" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Confidence scores</text>
+      <text x="670" y="184" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Filled Excel export</text>
+      <text x="670" y="200" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Client-name warnings</text>
+
+      <!-- Human loop -->
+      <path d="M459 210 Q459 272 274 272 Q200 272 200 230" fill="none" stroke="var(--border)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#ov-arr)"/>
+      <text x="340" y="285" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">human review — accept / edit / skip / approve schema</text>
+    </svg>
+
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--teal-fill);border:1px solid var(--teal-stroke)"></div>Schema discovery</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--amber-fill);border:1px solid var(--amber-stroke)"></div>Corpus (ChromaDB)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--purple-fill);border:1px solid var(--purple-stroke)"></div>Retrieval + generation</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--coral-fill);border:1px solid var(--coral-stroke)"></div>Web application layer</div>
+    </div>
+  </div>
+
+  <h3>System facts</h3>
+  <table>
+    <tr><th>Dimension</th><th>Value</th></tr>
+    <tr><td>Source documents</td><td>4 RFI Excel files · inconsistent schemas · 279 Q&A rows</td></tr>
+    <tr><td>Corpus</td><td>1,646 chunks across 4 collections (combined/separated × cosine/L2)</td></tr>
+    <tr><td>Eval configurations</td><td>36 (4 collections × 3 retrieval modes × 3 rerankers)</td></tr>
+    <tr><td>Production config</td><td>rfi_separated_cosine + semantic + crossencoder + top-k=3</td></tr>
+    <tr><td>AI provider</td><td>Mistral (mistral-embed · mistral-small-latest · mistral-small as judge)</td></tr>
+    <tr><td>Stack</td><td>Python · FastAPI · React + shadcn/ui · ChromaDB · Docker Compose</td></tr>
+    <tr><td>Deployment</td><td>Home server (Lenovo M720q) · Cloudflare Tunnel · docker-compose.prod.yml</td></tr>
+    <tr><td>Hallucination refusal rate</td><td>1.000 across all 36 configurations</td></tr>
+    <tr><td>Best retrieval gap rate</td><td>0.176 (3 of 17 in-scope questions; floor is corpus property, not system bug)</td></tr>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════ TECHNICAL ═══════════════════════════════════ -->
+<div class="panel" id="technical">
+  <h2>Technical architecture</h2>
+  <p>Three Docker services share volumes for the corpus, session state, and source files. The pipeline package is importable by both the CLI and the backend — no subprocess shelling.</p>
+
+  <div class="card">
+    <svg viewBox="0 0 800 420">
+      <defs>
+        <marker id="tc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+
+      <!-- Docker boundary -->
+      <rect x="140" y="10" width="490" height="390" rx="12" fill="none" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="6 3"/>
+      <text x="385" y="30" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)" letter-spacing="2">DOCKER COMPOSE SERVICES</text>
+
+      <!-- CLI user -->
+      <rect x="10" y="60" width="110" height="44" rx="7" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="65" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--gray-text)" font-weight="600">CLI (docker)</text>
+      <text x="65" y="94" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">python -m pipeline.*</text>
+
+      <!-- Browser user -->
+      <rect x="10" y="170" width="110" height="44" rx="7" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="65" y="189" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--gray-text)" font-weight="600">Browser</text>
+      <text x="65" y="205" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">localhost:3000</text>
+
+      <line x1="120" y1="82" x2="155" y2="82" stroke="var(--arrow)" stroke-width="0.9" marker-end="url(#tc-arr)"/>
+      <line x1="120" y1="192" x2="155" y2="170" stroke="var(--arrow)" stroke-width="0.9" marker-end="url(#tc-arr)"/>
+
+      <!-- cli service -->
+      <rect x="155" y="42" width="145" height="80" rx="8" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="228" y="64" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--teal-text)" font-weight="600">cli service</text>
+      <text x="228" y="80" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">profile · ingest · query</text>
+      <text x="228" y="95" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">review_chunks · evaluate</text>
+      <text x="228" y="110" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">profiles=cli (on-demand)</text>
+
+      <!-- backend service -->
+      <rect x="155" y="148" width="145" height="85" rx="8" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="228" y="170" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--purple-text)" font-weight="600">backend service</text>
+      <text x="228" y="186" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">FastAPI + uvicorn :8000</text>
+      <text x="228" y="202" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">SSE endpoints</text>
+      <text x="228" y="218" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">session management</text>
+
+      <!-- frontend service -->
+      <rect x="155" y="260" width="145" height="80" rx="8" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="228" y="282" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--coral-text)" font-weight="600">frontend service</text>
+      <text x="228" y="298" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">Vite dev / nginx :3000</text>
+      <text x="228" y="314" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">React + shadcn/ui</text>
+      <text x="228" y="330" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-stroke)">EventSource + fetch</text>
+
+      <!-- pipeline package -->
+      <rect x="340" y="50" width="155" height="140" rx="8" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="418" y="72" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--amber-text)" font-weight="600">pipeline/ (package)</text>
+      <line x1="352" y1="84" x2="484" y2="84" stroke="var(--amber-stroke)" stroke-width="0.4" opacity="0.4"/>
+      <text x="418" y="98" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">profile.py</text>
+      <text x="418" y="113" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">ingest.py</text>
+      <text x="418" y="128" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">query.py</text>
+      <text x="418" y="143" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">evaluate.py</text>
+      <text x="418" y="158" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">mistral_helpers.py</text>
+      <text x="418" y="173" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">loaders/ · models/</text>
+
+      <!-- Volumes -->
+      <rect x="340" y="220" width="155" height="150" rx="8" fill="var(--blue-fill)" stroke="var(--blue-stroke)" stroke-width="0.8"/>
+      <text x="418" y="242" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--blue-text)" font-weight="600">Shared volumes</text>
+      <line x1="352" y1="252" x2="484" y2="252" stroke="var(--blue-stroke)" stroke-width="0.4" opacity="0.4"/>
+      <text x="418" y="267" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--blue-stroke)">./chroma_db   ChromaDB</text>
+      <text x="418" y="283" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--blue-stroke)">./data        source RFIs (rw)</text>
+      <text x="418" y="299" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--blue-stroke)">./tmp         session state</text>
+      <text x="418" y="315" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--blue-stroke)">./outputs     eval results</text>
+      <text x="418" y="331" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--blue-stroke)">config_rfi_*.json (root)</text>
+      <text x="418" y="347" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--blue-stroke)">.ingest_checkpoint.json</text>
+
+      <!-- Connections -->
+      <line x1="300" y1="82" x2="340" y2="100" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#tc-arr)"/>
+      <line x1="300" y1="190" x2="340" y2="150" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#tc-arr)"/>
+      <line x1="300" y1="82" x2="340" y2="260" stroke="var(--arrow)" stroke-width="0.6" stroke-dasharray="3 2" marker-end="url(#tc-arr)"/>
+      <line x1="300" y1="190" x2="340" y2="280" stroke="var(--arrow)" stroke-width="0.6" stroke-dasharray="3 2" marker-end="url(#tc-arr)"/>
+
+      <!-- External APIs -->
+      <rect x="545" y="50" width="145" height="130" rx="8" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="618" y="72" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--gray-text)" font-weight="600">External APIs</text>
+      <line x1="557" y1="82" x2="679" y2="82" stroke="var(--gray-stroke)" stroke-width="0.4" opacity="0.4"/>
+      <text x="618" y="98" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">mistral-embed</text>
+      <text x="618" y="113" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">mistral-small-latest</text>
+      <text x="618" y="128" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">mistral-small (judge)</text>
+      <text x="618" y="150" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">cross-encoder/</text>
+      <text x="618" y="165" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">ms-marco-MiniLM</text>
+
+      <line x1="495" y1="120" x2="545" y2="120" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#tc-arr)"/>
+    </svg>
+
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--teal-fill);border:1px solid var(--teal-stroke)"></div>CLI service (on-demand)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--purple-fill);border:1px solid var(--purple-stroke)"></div>Backend (FastAPI)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--coral-fill);border:1px solid var(--coral-stroke)"></div>Frontend (React)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--amber-fill);border:1px solid var(--amber-stroke)"></div>Pipeline package (shared)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--blue-fill);border:1px solid var(--blue-stroke)"></div>Shared volumes</div>
+    </div>
+  </div>
+
+  <h3>Model routing table</h3>
+  <table>
+    <tr><th>Stage</th><th>Model</th><th>Why this model</th></tr>
+    <tr><td>Embedding</td><td>mistral-embed</td><td>1024-dim vectors; same provider as generation avoids cross-provider calibration issues</td></tr>
+    <tr><td>Schema mapping</td><td>mistral-small-latest</td><td>Structured JSON output from column profile samples; fast, cheap, one call per file</td></tr>
+    <tr><td>Answer generation</td><td>mistral-small-latest</td><td>Sufficient for synthesis over retrieved context; not a frontier reasoning task</td></tr>
+    <tr><td>LLM reranker</td><td>mistral-small-latest</td><td>One extra call per query; judges "which chunks enable an answerable response"</td></tr>
+    <tr><td>Eval judge</td><td>mistral-small-latest</td><td>Faithfulness/completeness scoring over known context; fast and cheap at 36×20 scale</td></tr>
+    <tr><td>Cross-encoder</td><td>cross-encoder/ms-marco-MiniLM-L-6-v2</td><td>Local, ~50ms/pair, no per-query API cost; production default reranker</td></tr>
+  </table>
+
+  <h3>Data stores</h3>
+  <table>
+    <tr><th>Store</th><th>Content</th><th>Access pattern</th></tr>
+    <tr><td>ChromaDB (./chroma_db)</td><td>4 collections: combined+separated × cosine+L2. 1,646 chunks total.</td><td>Query: semantic/BM25/hybrid. Mutated by ingest only.</td></tr>
+    <tr><td>config_rfi_*.json</td><td>Approved column mapping per source file. client, date, sheet, header_row, column roles.</td><td>Read by loader, query, answerer. Written by profiler + approve endpoint.</td></tr>
+    <tr><td>.ingest_checkpoint.json</td><td>Set of (collection, source_file) pairs already ingested.</td><td>Read and written by ingest.py and ingester service. Prevents duplicate chunks.</td></tr>
+    <tr><td>./tmp/{session_id}/</td><td>Per-session uploads, profile proposals, approved configs, answers, output Excel.</td><td>Created on session start. Cleaned by startup sweep + hourly asyncio task after 24h TTL.</td></tr>
+    <tr><td>./data/</td><td>Source RFI Excel files. Populated by CLI (manual copy) or by approve endpoint (auto-copy).</td><td>Read by loader. Written by ingest approve flow. Read-write volume in production.</td></tr>
+  </table>
+</div>
+
+<!-- ═══════════════════════════════════ FUNCTIONAL ═══════════════════════════════════ -->
+<div class="panel" id="functional">
+  <h2>How the system works</h2>
+  <p>Two distinct workflows share a single corpus and pipeline package. The ingest workflow builds the corpus; the answer workflow queries it.</p>
+
+  <h3>Ingest workflow</h3>
+  <div class="card">
+    <svg viewBox="0 0 760 200">
+      <defs>
+        <marker id="fn-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <!-- Step boxes -->
+      <rect x="10" y="70" width="110" height="60" rx="7" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="65" y="96" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--gray-text)" font-weight="600">Upload</text>
+      <text x="65" y="114" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">.xlsx file</text>
+      <line x1="120" y1="100" x2="145" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#fn-arr)"/>
+
+      <rect x="145" y="55" width="130" height="90" rx="7" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="210" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--teal-text)" font-weight="600">Profile</text>
+      <text x="210" y="95" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">? density → sheet</text>
+      <text x="210" y="110" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">label-match → header</text>
+      <text x="210" y="125" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">LLM → role mapping</text>
+      <text x="210" y="137" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">validator checks</text>
+      <line x1="275" y1="100" x2="300" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#fn-arr)"/>
+
+      <!-- Human gate -->
+      <polygon points="300,80 340,100 300,120 260,100" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="300" y="97" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-text)">Human</text>
+      <text x="300" y="108" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-text)">approve?</text>
+
+      <!-- Reject loop -->
+      <path d="M260 100 Q220 150 210 145" fill="none" stroke="var(--coral-stroke)" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#fn-arr)"/>
+      <text x="225" y="165" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-text)">reject → re-profile</text>
+
+      <line x1="340" y1="100" x2="365" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#fn-arr)"/>
+      <text x="353" y="90" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">approve</text>
+
+      <rect x="365" y="60" width="130" height="80" rx="7" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="430" y="82" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--teal-text)" font-weight="600">Chunk + Embed</text>
+      <text x="430" y="98" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">Strategy A + B</text>
+      <text x="430" y="113" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">4 collections</text>
+      <text x="430" y="128" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">batches of 16</text>
+      <line x1="495" y1="100" x2="520" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#fn-arr)"/>
+
+      <rect x="520" y="60" width="110" height="80" rx="7" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="575" y="82" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--amber-text)" font-weight="600">ChromaDB</text>
+      <text x="575" y="98" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">chunks + metadata</text>
+      <text x="575" y="113" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">checkpoint updated</text>
+      <text x="575" y="128" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">config written (×2)</text>
+
+      <!-- SSE labels -->
+      <text x="210" y="20" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">── SSE stream ──</text>
+      <text x="430" y="20" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">── SSE stream ──</text>
+    </svg>
+  </div>
+
+  <h3>Answer workflow</h3>
+  <div class="card">
+    <svg viewBox="0 0 760 200">
+      <defs>
+        <marker id="aw-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+      <rect x="10" y="70" width="110" height="60" rx="7" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="65" y="96" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--gray-text)" font-weight="600">Upload</text>
+      <text x="65" y="114" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">new client RFI</text>
+      <line x1="120" y1="100" x2="145" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#aw-arr)"/>
+
+      <rect x="145" y="55" width="130" height="90" rx="7" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="210" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--purple-text)" font-weight="600">Retrieve</text>
+      <text x="210" y="95" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">semantic (default)</text>
+      <text x="210" y="110" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">pool-20, top-k=3</text>
+      <text x="210" y="125" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">crossencoder rerank</text>
+      <text x="210" y="137" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">Q→A pair linkage</text>
+      <line x1="275" y1="100" x2="300" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#aw-arr)"/>
+
+      <rect x="300" y="55" width="130" height="90" rx="7" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="365" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--purple-text)" font-weight="600">Generate</text>
+      <text x="365" y="95" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">Mistral + guard</text>
+      <text x="365" y="110" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">client-name scan</text>
+      <text x="365" y="125" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">refused flag set</text>
+      <text x="365" y="137" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">full trace emitted</text>
+      <line x1="430" y1="100" x2="455" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#aw-arr)"/>
+
+      <!-- Human review gate -->
+      <rect x="455" y="55" width="130" height="90" rx="7" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="520" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--amber-text)" font-weight="600">Review</text>
+      <text x="520" y="95" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">Accept / Edit / Skip</text>
+      <text x="520" y="110" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">per-question card</text>
+      <text x="520" y="125" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">sources + scores</text>
+      <text x="520" y="137" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-stroke)">client-name badge</text>
+      <line x1="585" y1="100" x2="615" y2="100" stroke="var(--arrow)" stroke-width="1" marker-end="url(#aw-arr)"/>
+
+      <rect x="615" y="65" width="120" height="70" rx="7" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="675" y="88" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--teal-text)" font-weight="600">Export</text>
+      <text x="675" y="105" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">original Excel + 3 cols</text>
+      <text x="675" y="120" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">Answer · Sources · Score</text>
+
+      <!-- SSE label -->
+      <text x="255" y="175" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">──────── SSE stream (per-question events) ────────</text>
+    </svg>
+  </div>
+
+  <h3>Four-collection corpus diagram</h3>
+  <div class="card">
+    <svg viewBox="0 0 700 240">
+      <defs>
+        <marker id="col-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+
+      <!-- Source rows -->
+      <rect x="10" y="90" width="110" height="60" rx="7" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="65" y="113" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="var(--gray-text)" font-weight="600">279 Q&A rows</text>
+      <text x="65" y="130" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--muted)">4 Excel files</text>
+
+      <!-- Strategy A branch -->
+      <path d="M120 110 Q145 110 145 60" fill="none" stroke="var(--arrow)" stroke-width="0.9" marker-end="url(#col-arr)"/>
+      <text x="140" y="85" font-family="Georgia,serif" font-size="9" fill="var(--muted)">Strategy A</text>
+
+      <!-- Strategy B branch -->
+      <path d="M120 130 Q145 130 145 180" fill="none" stroke="var(--arrow)" stroke-width="0.9" marker-end="url(#col-arr)"/>
+      <text x="140" y="170" font-family="Georgia,serif" font-size="9" fill="var(--muted)">Strategy B</text>
+
+      <!-- Collection boxes: top row (combined) -->
+      <rect x="175" y="30" width="180" height="60" rx="7" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="265" y="53" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-text)" font-weight="600">rfi_combined_cosine</text>
+      <text x="265" y="69" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">279 chunks · text = "Q: … A: …"</text>
+      <text x="265" y="82" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">cosine distance</text>
+
+      <rect x="385" y="30" width="180" height="60" rx="7" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="475" y="53" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-text)" font-weight="600">rfi_combined_l2</text>
+      <text x="475" y="69" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-stroke)">279 chunks · text = "Q: … A: …"</text>
+      <text x="475" y="82" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">L2 distance ← production default</text>
+
+      <!-- Collection boxes: bottom row (separated) -->
+      <rect x="175" y="150" width="180" height="70" rx="7" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="265" y="172" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-text)" font-weight="600">rfi_separated_cosine</text>
+      <text x="265" y="188" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">544 chunks (−14 empty)</text>
+      <text x="265" y="203" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">question + answer chunks</text>
+      <text x="265" y="213" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">linked by pair_id · cosine</text>
+
+      <rect x="385" y="150" width="180" height="70" rx="7" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="475" y="172" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-text)" font-weight="600">rfi_separated_l2</text>
+      <text x="475" y="188" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">544 chunks (−14 empty)</text>
+      <text x="475" y="203" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-stroke)">question + answer chunks</text>
+      <text x="475" y="213" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">linked by pair_id · L2</text>
+
+      <line x1="355" y1="60" x2="385" y2="60" stroke="var(--arrow)" stroke-width="0.7" stroke-dasharray="3 2" marker-end="url(#col-arr)"/>
+      <line x1="355" y1="185" x2="385" y2="185" stroke="var(--arrow)" stroke-width="0.7" stroke-dasharray="3 2" marker-end="url(#col-arr)"/>
+
+      <!-- "production ★" marker -->
+      <text x="588" y="22" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">★ production default</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════ USER JOURNEYS ═══════════════════════════════════ -->
+<div class="panel" id="journeys">
+  <h2>User journeys</h2>
+  <p>Three journeys: the schema approval HITL loop, the full answer-review-export flow, and the eval run that determined the production configuration.</p>
+
+  <h3>Journey 1 — Ingest HITL loop</h3>
+  <div class="card">
+    <svg viewBox="0 0 720 280">
+      <defs>
+        <marker id="j1-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+
+      <!-- Top lane label -->
+      <text x="30" y="30" font-family="Georgia,serif" font-size="10" fill="var(--muted)">UI / Browser</text>
+      <line x1="10" y1="35" x2="710" y2="35" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4 2"/>
+      <text x="30" y="185" font-family="Georgia,serif" font-size="10" fill="var(--muted)">Backend / Pipeline</text>
+      <line x1="10" y1="190" x2="710" y2="190" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4 2"/>
+
+      <!-- Step 1: Upload -->
+      <rect x="30" y="45" width="90" height="50" rx="6" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="75" y="66" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-text)" font-weight="600">Drop .xlsx</text>
+      <text x="75" y="82" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">POST /ingest/upload</text>
+      <line x1="120" y1="70" x2="145" y2="70" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j1-arr)"/>
+
+      <!-- Step 2: Profile SSE (backend) -->
+      <rect x="145" y="195" width="140" height="70" rx="6" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="215" y="217" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-text)" font-weight="600">Profile (SSE)</text>
+      <text x="215" y="233" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">sheet detect → headers</text>
+      <text x="215" y="248" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">LLM mapping + validate</text>
+      <text x="215" y="260" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">emit step events</text>
+      <path d="M145 70 L145 130 L215 130 L215 195" fill="none" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j1-arr)"/>
+
+      <!-- Step 3: Timeline renders (UI) -->
+      <rect x="145" y="45" width="140" height="50" rx="6" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="215" y="67" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-text)" font-weight="600">Step timeline</text>
+      <text x="215" y="83" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">steps render as events stream</text>
+      <path d="M215 195 L215 140 L215 95" fill="none" stroke="var(--arrow)" stroke-width="0.7" stroke-dasharray="3 2" marker-end="url(#j1-arr)"/>
+      <text x="230" y="145" font-family="Georgia,serif" font-size="8" fill="var(--muted)">SSE events</text>
+
+      <!-- Step 4: Proposal card (UI) -->
+      <rect x="318" y="45" width="130" height="60" rx="6" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="383" y="68" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-text)" font-weight="600">Proposal card</text>
+      <text x="383" y="84" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">column mapping shown</text>
+      <text x="383" y="96" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">editable client/date</text>
+      <line x1="285" y1="70" x2="318" y2="70" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j1-arr)"/>
+
+      <!-- Decision diamond -->
+      <polygon points="490,75 530,100 490,125 450,100" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="490" y="97" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-text)">Approve?</text>
+      <line x1="448" y1="75" x2="430" y2="65" stroke="var(--arrow)" stroke-width="0.7" stroke-dasharray="2 2" marker-end="url(#j1-arr)"/>
+      <line x1="448" y1="100" x2="448" y2="100" stroke="transparent"/>
+      <line x1="448" y1="100" x2="383" y2="100" stroke="var(--coral-stroke)" stroke-width="0.7" stroke-dasharray="3 2"/>
+
+      <!-- Reject path -->
+      <path d="M490 125 Q490 160 383 160 Q280 160 215 155" fill="none" stroke="var(--coral-stroke)" stroke-width="0.8" stroke-dasharray="3 2" marker-end="url(#j1-arr)"/>
+      <text x="350" y="170" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-text)">reject → re-profile from scratch</text>
+
+      <!-- Approve path -->
+      <line x1="530" y1="100" x2="560" y2="100" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j1-arr)"/>
+      <text x="544" y="90" font-family="Georgia,serif" font-size="9" fill="var(--muted)">yes</text>
+
+      <!-- Ingest SSE -->
+      <rect x="560" y="195" width="130" height="60" rx="6" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="625" y="217" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-text)" font-weight="600">Ingest (SSE)</text>
+      <text x="625" y="233" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">embed · write to 4 collections</text>
+      <text x="625" y="248" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">checkpoint per file</text>
+      <path d="M625 100 L625 130 L625 195" fill="none" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j1-arr)"/>
+
+      <!-- Summary -->
+      <rect x="560" y="45" width="130" height="55" rx="6" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="625" y="68" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-text)" font-weight="600">Progress + summary</text>
+      <text x="625" y="84" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">4 progress bars</text>
+      <text x="625" y="96" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">corpus size on done</text>
+      <path d="M625 195 L625 150 L625 100" fill="none" stroke="var(--arrow)" stroke-width="0.7" stroke-dasharray="3 2" marker-end="url(#j1-arr)"/>
+    </svg>
+  </div>
+
+  <h3>Journey 2 — Answer, review, and export</h3>
+  <div class="card">
+    <svg viewBox="0 0 720 220">
+      <defs>
+        <marker id="j2-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+
+      <!-- Upload -->
+      <rect x="10" y="75" width="95" height="70" rx="6" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="58" y="98" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--gray-text)" font-weight="600">Upload RFI</text>
+      <text x="58" y="114" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">question extraction</text>
+      <text x="58" y="128" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">28 Qs found</text>
+      <text x="58" y="140" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">preview 3</text>
+      <line x1="105" y1="110" x2="130" y2="110" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j2-arr)"/>
+
+      <!-- Process SSE -->
+      <rect x="130" y="55" width="130" height="110" rx="6" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="195" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-text)" font-weight="600">Process (SSE)</text>
+      <text x="195" y="94" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">per-question loop</text>
+      <text x="195" y="109" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">retrieve → rerank</text>
+      <text x="195" y="124" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">Q→A linkage</text>
+      <text x="195" y="139" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">generate + guard</text>
+      <text x="195" y="154" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">client-name scan</text>
+      <line x1="260" y1="110" x2="285" y2="110" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j2-arr)"/>
+
+      <!-- Answer cards -->
+      <rect x="285" y="40" width="155" height="140" rx="6" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="363" y="62" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-text)" font-weight="600">Answer cards (stream)</text>
+      <text x="363" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">Q + draft answer</text>
+      <text x="363" y="93" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">3 sources + scores</text>
+      <text x="363" y="108" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">⚠ client-name badge</text>
+      <text x="363" y="123" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">✓ Accept (green)</text>
+      <text x="363" y="138" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">✎ Edit (amber)</text>
+      <text x="363" y="153" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">✗ Skip (grey)</text>
+      <text x="363" y="168" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">cards usable immediately</text>
+      <line x1="440" y1="110" x2="465" y2="110" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j2-arr)"/>
+
+      <!-- Review table -->
+      <rect x="465" y="55" width="130" height="110" rx="6" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="530" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-text)" font-weight="600">Review table</text>
+      <text x="530" y="94" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">all Qs + status badges</text>
+      <text x="530" y="109" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">accepted / edited / skipped</text>
+      <text x="530" y="124" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">summary: 34/8/5</text>
+      <text x="530" y="139" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">edits sent on export</text>
+      <text x="530" y="154" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">trigger download</text>
+      <line x1="595" y1="110" x2="620" y2="110" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j2-arr)"/>
+
+      <!-- Export -->
+      <rect x="620" y="65" width="90" height="90" rx="6" fill="var(--coral-fill)" stroke="var(--coral-stroke)" stroke-width="0.8"/>
+      <text x="665" y="88" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--coral-text)" font-weight="600">Excel export</text>
+      <text x="665" y="104" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">original cols preserved</text>
+      <text x="665" y="119" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">+ Suggested Answer</text>
+      <text x="665" y="134" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">+ Source RFIs</text>
+      <text x="665" y="149" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--coral-stroke)">+ Confidence score</text>
+
+      <!-- Progress bar label -->
+      <text x="195" y="200" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">progress bar: "Answering question 12 of 47…"</text>
+    </svg>
+  </div>
+
+  <h3>Journey 3 — Eval matrix that selected the production config</h3>
+  <div class="card">
+    <svg viewBox="0 0 700 200">
+      <defs>
+        <marker id="j3-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-linecap="round"/>
+        </marker>
+      </defs>
+
+      <rect x="10" y="70" width="120" height="60" rx="6" fill="var(--gray-fill)" stroke="var(--gray-stroke)" stroke-width="0.8"/>
+      <text x="70" y="94" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--gray-text)" font-weight="600">20-question</text>
+      <text x="70" y="110" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">ground-truth dataset</text>
+      <text x="70" y="122" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--muted)">17 in-scope · 3 out</text>
+      <line x1="130" y1="100" x2="155" y2="100" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j3-arr)"/>
+
+      <rect x="155" y="40" width="170" height="120" rx="6" fill="var(--purple-fill)" stroke="var(--purple-stroke)" stroke-width="0.8"/>
+      <text x="240" y="63" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--purple-text)" font-weight="600">36 configurations</text>
+      <text x="240" y="79" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">4 collections</text>
+      <text x="240" y="93" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">× 3 retrieval modes</text>
+      <text x="240" y="107" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">× 3 rerankers</text>
+      <text x="240" y="121" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">checkpoint per config</text>
+      <text x="240" y="135" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">LLM judge on non-refused</text>
+      <text x="240" y="149" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--purple-stroke)">gap rate separate from halluc</text>
+      <line x1="325" y1="100" x2="350" y2="100" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j3-arr)"/>
+
+      <rect x="350" y="40" width="170" height="120" rx="6" fill="var(--amber-fill)" stroke="var(--amber-stroke)" stroke-width="0.8"/>
+      <text x="435" y="63" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--amber-text)" font-weight="600">Key findings</text>
+      <text x="435" y="79" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">Semantic &gt; hybrid (small corpus)</text>
+      <text x="435" y="93" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">L2 marginally beats cosine</text>
+      <text x="435" y="107" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">LLM rerank lowest gap rate</text>
+      <text x="435" y="121" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">Hallu refusal = 1.000 all configs</text>
+      <text x="435" y="135" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">F/R = 5.00 (judge ceiling)</text>
+      <text x="435" y="149" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--amber-stroke)">3 of 4 spec predictions wrong</text>
+      <line x1="520" y1="100" x2="545" y2="100" stroke="var(--arrow)" stroke-width="0.8" marker-end="url(#j3-arr)"/>
+
+      <rect x="545" y="55" width="145" height="90" rx="6" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-width="0.8"/>
+      <text x="618" y="78" text-anchor="middle" font-family="Georgia,serif" font-size="10" fill="var(--teal-text)" font-weight="600">Production config</text>
+      <text x="618" y="94" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">separated_cosine</text>
+      <text x="618" y="109" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">+ semantic</text>
+      <text x="618" y="124" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">+ crossencoder</text>
+      <text x="618" y="139" text-anchor="middle" font-family="Georgia,serif" font-size="9" fill="var(--teal-stroke)">top-k = 3</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════ DESIGN PRINCIPLES ═══════════════════════════════════ -->
+<div class="panel" id="principles">
+  <h2>Design principles</h2>
+  <p>Nine load-bearing decisions. Each one is a concise statement plus the reasoning that would survive a challenge.</p>
+
+  <div class="decision">
+    <strong>1. Discover schema; never assume it.</strong>
+    <span>Clients set the RFI format, not us. Every assumption about column positions, header rows, or sheet layout will eventually be wrong. The profiler discovers structure at profile time and persists the discovery to a config file. Runtime paths (ingest, query) treat the config as ground truth. Discovery cost is one-time; the payoff compounds across every new file format that arrives.</span>
+  </div>
+
+  <div class="decision">
+    <strong>2. Stack layers with complementary failure modes.</strong>
+    <span>The schema profiler has three layers: heuristic (deterministic, cheap), LLM (phrasing-aware, non-deterministic), and validator (constraint enforcement). Each layer catches what the one below it misses. Adding a layer that fails on the same inputs as an existing one adds no robustness; adding one that fails on disjoint inputs does. The human is the fourth layer — for semantic correctness no machine can verify.</span>
+  </div>
+
+  <div class="decision">
+    <strong>3. Validate before showing humans. Reserve human attention for semantic judgements.</strong>
+    <span>The validator runs between the LLM and the human. A broken mapping (duplicate roles, invented role names) never reaches the approval screen. Human attention is reserved for the question the validator cannot answer: "Is column B actually the question, given what I know about this client?" Conflating deterministic checks with human review erodes trust in the gate.</span>
+  </div>
+
+  <div class="decision">
+    <strong>4. Measure retrieval; don't commit to an ideology.</strong>
+    <span>Hybrid retrieval was the spec's default recommendation. The 36-configuration eval overturned it: semantic outperformed hybrid on this corpus. The right retrieval architecture is empirical, not theoretical — it depends on corpus size, query distribution, and terminology density. The eval ran 36 configurations against a ground-truth dataset before any production recommendation was made. Three of four spec predictions were wrong.</span>
+  </div>
+
+  <div class="decision">
+    <strong>5. Distinguish hallucination refusals from retrieval gaps.</strong>
+    <span>Both produce "I cannot find this in our corpus." They mean opposite things. Hallucination refusal = system working correctly. Retrieval gap = system failing. A single refusal rate metric conflates them: a retrieval failure looks like correct grounding. The eval tracks them separately. A high hallucination refusal rate is good; a high retrieval gap rate is a bug to fix.</span>
+  </div>
+
+  <div class="decision">
+    <strong>6. Cross-tenant content leakage needs its own design and eval dimension.</strong>
+    <span>Faithfulness, relevance, and completeness metrics cannot catch an answer that names a past client verbatim. The answer is faithful to the retrieved context — the judge scores it at 5.0 — but the client name in the context shouldn't appear in the output for a different client. This is a safety concern that quality metrics are blind to by construction. It needs a prompt-level guard, a post-generation redaction pass, and an eval metric that scores cross-client name occurrence explicitly.</span>
+  </div>
+
+  <div class="decision">
+    <strong>7. The UI participates in the CLI's persistence model; it does not replace it.</strong>
+    <span>The approve endpoint writes config_rfi_*.json to repo root — the same file the CLI reads. The approve endpoint copies the uploaded file to data/ — the same directory the CLI loader reads from. Both update the checkpoint file. A session started via the UI is resumable from the CLI without any migration. Designing the persistence contract first and deriving both interfaces from it is what makes this work. A UI that adds a new database instead of participating in the existing contract creates migration debt the first time a third interface appears.</span>
+  </div>
+
+  <div class="decision">
+    <strong>8. Deterministic where the content is a fact; AI judgment only where it adds value.</strong>
+    <span>Label-match header detection is deterministic — if a cell contains "Question", that cell is the header. The LLM runs only when the heuristic finds no winner. The hallucination guard is a fixed string comparison — refused answers are flagged without asking the model to judge itself. The client-name scan is a regex pass over known config values — no AI involved. AI is reserved for: schema mapping (phrasing inference from samples), semantic retrieval (vector similarity), answer generation (synthesis from context), and reranking (relevance scoring). Everything else is deterministic.</span>
+  </div>
+
+  <div class="decision">
+    <strong>9. Signal upgrade paths in the original decision; execute them when the trigger fires.</strong>
+    <span>The session cleanup started as a startup-only sweep. The original design noted: "if sessions accumulate in practice (long-running deployment + heavy daily use), promote to an asyncio background task." When the home-server deployment removed the daily-restart assumption, the upgrade was a 30-line patch to the exact location the original decision indicated. The general principle: when picking the simpler shape, document the condition that would require the complex shape and the exact form the upgrade takes. Future-you doesn't re-derive the architecture; they check the trigger and execute the named upgrade.</span>
+  </div>
+
+  <h3>What this system demonstrates</h3>
+  <table>
+    <tr><th>Capability</th><th>Where it shows up</th></tr>
+    <tr><td>Schema discovery over real-world inconsistent inputs</td><td>3-layer profiler · 4 file shapes handled · escape-hatch CLI flags</td></tr>
+    <tr><td>RAG pipeline with empirical configuration selection</td><td>36-config eval · production recommendation overturning 3 of 4 spec predictions</td></tr>
+    <tr><td>Multi-tenant safety in a shared corpus</td><td>Cross-client name scan · warning badges · documented pipeline-layer fix</td></tr>
+    <tr><td>Production web application on real hardware</td><td>Docker Compose · Cloudflare Tunnel · SSE streaming · session management · nginx prod config</td></tr>
+    <tr><td>CLI and UI as dual interfaces to one persistence contract</td><td>Shared config_rfi_*.json · shared ChromaDB · shared checkpoint · dual approve write</td></tr>
+    <tr><td>Human-in-the-loop at every consequential decision</td><td>Schema approval · answer review · Accept/Edit/Skip per question · client-name warnings</td></tr>
+  </table>
+</div>
+
+</div><!-- .content -->
+
+<script>
+function show(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelector(`[onclick="show('${id}')"]`).classList.add('active');
+}
+</script>
+</body>
+</html>

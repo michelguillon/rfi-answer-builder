@@ -14,7 +14,7 @@ rejects the LLM output), yields a single error event and stops:
 The profiler's CLI runs an interactive y/n approval at the end;
 that approval is deliberately *not* in this service. The proposal
 is written to `tmp/{session_id}/profile.json` and the human
-approves via a separate POST endpoint (SPEC_UI Step 3). Keeping
+approves via a separate POST endpoint (rfi_SPEC Step 3). Keeping
 approval out of the SSE stream means a dropped connection between
 "proposal yielded" and "approval clicked" does not lose work — the
 proposal is on disk before the proposal event is sent.

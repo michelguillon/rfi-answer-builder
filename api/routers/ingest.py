@@ -144,7 +144,7 @@ class ApproveBody(BaseModel):
     """Body of POST /api/ingest/approve.
 
     The frontend collects only client/date edits — column roles are
-    NOT editable in the UI (see SPEC_UI's Ingest wireframe). If
+    NOT editable in the UI (see rfi_SPEC's Ingest wireframe). If
     omitted, the inferred values from profile.json are kept.
     """
 

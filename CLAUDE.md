@@ -24,12 +24,13 @@ subtrees:
 
 ## Current state
 
-The repo has two layers, each with its own spec:
+The repo has two layers, both specified in one consolidated document,
+[docs/rfi_SPEC.md](docs/rfi_SPEC.md) (Phase 1 = pipeline, Phase 2 = UI):
 
-| Layer | Spec | Status |
-|---|---|---|
-| **Pipeline** (CLI, ChromaDB, eval) | [docs/SPEC_RFI_Standalone.md](docs/SPEC_RFI_Standalone.md) | **Complete** — 7 spec steps + production recommendation. |
-| **UI** (FastAPI + React + shadcn/ui) | [docs/SPEC_UI.md](docs/SPEC_UI.md) | **Complete** on `feat/ui` — 9 spec steps + delete-RFI (9.5) + polish. |
+| Layer | Status |
+|---|---|
+| **Pipeline** (CLI, ChromaDB, eval) | **Complete** — 7 spec steps + production recommendation. |
+| **UI** (FastAPI + React + shadcn/ui) | **Complete** on `feat/ui` — 9 spec steps + delete-RFI (9.5) + polish. |
 
 Both layers are feature-complete. The pipeline's eval (LEARNING_NOTES
 entry 13) landed the production recommendation
@@ -57,7 +58,7 @@ the Landing page).
 
 This is a **private repository**. It will be handed over to the
 employer on exit, and a sanitised version may eventually go public
-with sample data only (see SPEC_UI.md "Public repo preparation"). No
+with sample data only (see rfi_SPEC.md "Public repo preparation"). No
 proprietary client data may ever land in a commit OR in a built
 Docker image (the `.dockerignore` enforces the latter — keep it
 current when adding new data-bearing directories).
@@ -152,7 +153,7 @@ developer learning Python syntax. Calibrate comments accordingly:
 1. **`ARCHITECTURAL DECISION:` blocks.** Every non-obvious choice gets
    one — what was chosen, what was rejected, and why. Place at the top of
    the module or immediately above the construct it explains.
-2. **Mirror in [docs/LEARNING_NOTES_RFI.md](docs/LEARNING_NOTES_RFI.md).**
+2. **Mirror in [docs/rfi_LEARNING_NOTES.md](docs/rfi_LEARNING_NOTES.md).**
    Each `ARCHITECTURAL DECISION:` block should have a short companion
    entry in the learning notes: the decision, alternatives rejected, and
    why. The code explains the implementation; the notes explain the
@@ -188,7 +189,7 @@ After each step:
 1. Verify the artifact works (import test, CLI smoke test, browser
    test for UI work, or whatever the step's contract demands).
 2. Write the `ARCHITECTURAL DECISION:` block(s) into the code.
-3. Add the corresponding entry to `docs/LEARNING_NOTES_RFI.md`.
+3. Add the corresponding entry to `docs/rfi_LEARNING_NOTES.md`.
 4. Stop and confirm with the user before starting the next step.
 
 **Branch discipline.** Pipeline work landed directly on `main`
@@ -222,15 +223,15 @@ retrieval/generation path:
 
 ## Definition of done
 
-**Pipeline (SPEC_RFI_Standalone.md) — DONE.**
+**Pipeline (rfi_SPEC.md) — DONE.**
 - [x] Excel profiler on all 4 real RFI files
 - [x] Both chunking strategies ingested into 4 collections
 - [x] Hybrid retrieval + 3 rerankers implemented
 - [x] Eval framework with hallucination/retrieval-gap reported separately
 - [x] Comparison table + production recommendation (entry 13)
-- [x] LEARNING_NOTES_RFI.md entries 1–14
+- [x] rfi_LEARNING_NOTES.md entries 1–14
 
-**UI (SPEC_UI.md) — DONE on `feat/ui`.**
+**UI (rfi_SPEC.md) — DONE on `feat/ui`.**
 - [x] Backend: all SSE endpoints stream correctly
 - [x] Backend: session cleanup runs on startup
 - [x] Backend: export produces correct Excel with 3 new columns
@@ -240,7 +241,7 @@ retrieval/generation path:
 - [x] Frontend: cross-tenant client warning surfaced per answer
 - [x] Frontend: per-RFI delete from corpus on Landing page (Step 9.5)
 - [x] Docker Compose: `docker compose up` starts backend + frontend
-- [x] Auth omission documented in README + SPEC_UI + api/CLAUDE.md
-- [x] LEARNING_NOTES_RFI.md entries 15–25
+- [x] Auth omission documented in README + rfi_SPEC + api/CLAUDE.md
+- [x] rfi_LEARNING_NOTES.md entries 15–25
 - [ ] Sample data created for public demo (deferred — only relevant
       when preparing the eventual public-release sanitised repo)

@@ -68,7 +68,7 @@ rest, which is the right shape for sparse-column Excel layouts.
 
 ARCHITECTURAL DECISION: detect section-divider rows and propagate
 their value as metadata, do not emit them as Q&A pairs.
-Empirically (see the diagnostic table in docs/LEARNING_NOTES_RFI.md
+Empirically (see the diagnostic table in docs/rfi_LEARNING_NOTES.md
 entry 6), three of the four real RFI files contain "section
 marker" rows: a short label like "Audiences/Targeting" or "Direct
 consent" sitting in the question column above the actual Q&A rows

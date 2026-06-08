@@ -29,9 +29,9 @@ Events yielded:
 Errors yield {"type": "error", "data": "..."} and stop the stream.
 
 ARCHITECTURAL DECISION: production config from LEARNING_NOTES
-entry 13, not the SPEC_UI Step 4 prompt's older recommendation.
+entry 13, not the rfi_SPEC Step 4 prompt's older recommendation.
 
-SPEC_UI was written before the eval finalised; its Step 4 prompt
+rfi_SPEC was written before the eval finalised; its Step 4 prompt
 specified `rfi_separated_cosine + hybrid + crossencoder + top-k=3`.
 Entry 13's eval determined that semantic retrieval beat hybrid on
 this small/paraphrase-rich corpus, so the production

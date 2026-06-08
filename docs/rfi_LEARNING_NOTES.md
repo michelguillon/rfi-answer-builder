@@ -1,6 +1,6 @@
 # Learning Notes — RFI Answer Builder
 
-The companion file to [SPEC_RFI_Standalone.md](SPEC_RFI_Standalone.md). The
+The companion file to [rfi_SPEC.md](rfi_SPEC.md). The
 spec captures *what* the system does and *how* it is built. This file
 captures *why* — the intuition behind each architectural decision, the
 alternatives that were considered and rejected, and the findings that
@@ -1203,7 +1203,7 @@ root: `profile_excel.py`, `review_rfi_chunks.py`, `ingest_rfi.py`,
 `query_rfi.py`, `eval_rfi.py`, plus the shared `mistral_helpers.py`
 and the `loaders/` + `models/` packages. That layout worked fine
 for the script-based pipeline. With the UI layer about to be added
-(FastAPI + React per SPEC_UI.md), three problems surfaced:
+(FastAPI + React per rfi_SPEC.md), three problems surfaced:
 
 1. **The api/services/ files want to import pipeline logic, not
    subprocess-shell it.** Streaming SSE events from a subprocess
@@ -1263,7 +1263,7 @@ captures the dual contract (CLI + importable), the "files copied
 unchanged from a sibling learning project" list (moved here with
 updated paths), Excel-specific conventions, and checkpoint
 discipline. `api/CLAUDE.md` and `frontend/CLAUDE.md` are
-deliberately deferred to the SPEC_UI steps that create those
+deliberately deferred to the rfi_SPEC steps that create those
 directories — empty placeholders would invite drift.
 
 **Alternatives rejected.**
@@ -1335,7 +1335,7 @@ ChromaDB collections.
 
 ## 16. UI Step 1 — FastAPI backend scaffold + session management
 
-**SPEC_UI Step 1 deliverable.** Stand up `api/` with FastAPI,
+**rfi_SPEC Step 1 deliverable.** Stand up `api/` with FastAPI,
 stub the three workflow routers (sessions / ingest / answer),
 implement `api/session.py` (create, get-or-404, TTL cleanup),
 add `backend` as a second Docker Compose service, and write
@@ -1348,7 +1348,7 @@ behaviour yet — Steps 2–5 fill in the routers.
 the `@app.on_event("startup")` pattern in 0.93. The lifespan
 asynccontextmanager keeps startup + shutdown in one place and is
 what FastAPI will still support five versions from now. The
-SPEC_UI snippet showed the older form; modernised here without
+rfi_SPEC snippet showed the older form; modernised here without
 changing the contract.
 
 *Filesystem-backed sessions, not a database.* A single-purpose
@@ -1432,7 +1432,7 @@ Two things that will pay off across the rest of the UI build:
 
 ## 17. UI Step 2 — Ingest router upload + profile SSE
 
-**SPEC_UI Step 2 deliverable.** First real workflow code in the
+**rfi_SPEC Step 2 deliverable.** First real workflow code in the
 UI. `POST /api/ingest/upload` saves the Excel under
 `tmp/{session_id}/upload.xlsx` and returns a row-count estimate.
 `GET /api/ingest/profile` streams the profiler as Server-Sent
@@ -1552,7 +1552,7 @@ the pipeline package was carved at the right joint.
 
 ## 18. UI Step 3 — Approve + ingest SSE
 
-**SPEC_UI Step 3 deliverable.** `POST /api/ingest/approve` reads
+**rfi_SPEC Step 3 deliverable.** `POST /api/ingest/approve` reads
 the profile, applies the user's client/date edits, persists the
 config to both the session dir AND the durable repo-root
 location, copies the upload into `data/`, and streams ingest
@@ -1614,7 +1614,7 @@ convenience — the kind of pipeline-touching change
 `pipeline/CLAUDE.md` forbids.
 
 *Column roles are NOT editable in the UI; only client/date are.*
-SPEC_UI's Ingest wireframe shows only client and date as
+rfi_SPEC's Ingest wireframe shows only client and date as
 editable fields, and the approve body's Pydantic schema reflects
 that (`session_id`, optional `client`, optional `date` — nothing
 else). If a column was mis-classified by the LLM, the user
@@ -1695,7 +1695,7 @@ the UI ignores would break re-runs.
 
 ## 19. UI Step 4 — Answer workflow upload + per-question SSE
 
-**SPEC_UI Step 4 deliverable.** The Answer workflow: a fresh client
+**rfi_SPEC Step 4 deliverable.** The Answer workflow: a fresh client
 RFI arrives, the backend extracts its questions, then streams
 generated answers one at a time, each carrying full retrieval
 provenance. This is the workflow the CPO singled out as
@@ -1707,7 +1707,7 @@ event payload was designed around it.
 **Decisions made in code, with the load-bearing reasoning.**
 
 *Use the production config from entry 13, not the older
-recommendation in the spec.* SPEC_UI Step 4's prompt was written
+recommendation in the spec.* rfi_SPEC Step 4's prompt was written
 before the eval finalised and specified
 `rfi_separated_cosine + hybrid + crossencoder + top-k=3`. The
 eval that ran later (entry 13) determined semantic retrieval
@@ -1847,7 +1847,7 @@ the wrapper's. The wrapper's job is to make the internals
 
 ## 20. UI Step 5 — Excel exporter (filled RFI download)
 
-**SPEC_UI Step 5 deliverable.** The user has reviewed the
+**rfi_SPEC Step 5 deliverable.** The user has reviewed the
 streamed answers, edited some, skipped some, and clicks
 "Download filled RFI". The backend opens the original upload,
 appends three columns (Suggested Answer / Source RFIs /
@@ -1874,7 +1874,7 @@ critical macros, the workaround is to copy the new columns into
 the original file by hand.
 
 *Two-step edit-then-export, not a POST that returns the file.*
-SPEC_UI Step 9's ExportButton specifies "POST edits to backend
+rfi_SPEC Step 9's ExportButton specifies "POST edits to backend
 then GET /api/answer/export, trigger browser download". The GET
 download has two practical advantages over a POST that returns
 the file:
@@ -1988,7 +1988,7 @@ into those downstream tools.
 
 ## 21. UI Step 6 — Frontend scaffold (Vite + TS + shadcn + Router)
 
-**SPEC_UI Step 6 deliverable.** Stand up `frontend/` with Vite +
+**rfi_SPEC Step 6 deliverable.** Stand up `frontend/` with Vite +
 React + TypeScript, install shadcn primitives, wire React Router,
 add a Dockerfile + compose service, and write `frontend/CLAUDE.md`
 covering the layer-specific conventions. No business logic yet —
@@ -2112,7 +2112,7 @@ change in isolation.
 
 ## 22. UI Step 7 — Landing page + corpus stats endpoint
 
-**SPEC_UI Step 7 deliverable.** The first user-facing page. Two
+**rfi_SPEC Step 7 deliverable.** The first user-facing page. Two
 shadcn Cards side-by-side (stack on mobile) — one for each
 workflow — plus a footer that fetches `GET /api/corpus/stats`
 and shows "N Q&A pairs across M source RFIs".
@@ -2216,7 +2216,7 @@ framework correct?".
 
 ## 23. UI Step 8 — Ingest wizard (3-step Upload → Profile → Ingest)
 
-**SPEC_UI Step 8 deliverable.** The first interactive flow in the
+**rfi_SPEC Step 8 deliverable.** The first interactive flow in the
 UI. A three-step wizard that uploads an Excel, streams the
 profiler's discovery as a growing timeline, lets the user edit
 the inferred client/date in a ProposalCard, then streams ingest
@@ -2352,7 +2352,7 @@ underlying SSE-driven nature is the same shape.
 
 ## 24. UI Step 9 — Answer workflow (per-question SSE + review + export)
 
-**SPEC_UI Step 9 deliverable.** The other interactive flow, and
+**rfi_SPEC Step 9 deliverable.** The other interactive flow, and
 the one the CPO singled out as load-bearing because of the
 verbose provenance (LEARNING_NOTES entry 12). Upload a new client
 RFI; the backend extracts questions; the SSE stream emits one
@@ -2505,7 +2505,7 @@ second time it's followed.
 
 ## 25. UI Step 9.5 — Delete an RFI from the corpus
 
-**Why this step exists.** Not in SPEC_UI's nine ordered steps,
+**Why this step exists.** Not in rfi_SPEC's nine ordered steps,
 but added after the user's "will we be able to delete a specific
 fake RFI from the database post upload?" — a question that
 exposed a real gap: a user testing the ingest workflow with a
@@ -2665,7 +2665,7 @@ shape is intentionally conservative — minimum viable
 production, no Kubernetes, no service mesh, no orchestration
 beyond Docker Compose. The deployment topology assumed is "one
 small server behind the org's existing SSO + reverse proxy",
-which matches the SPEC_UI.md out-of-scope statement on auth.
+which matches the rfi_SPEC.md out-of-scope statement on auth.
 
 **Decisions made in code, with the load-bearing reasoning.**
 

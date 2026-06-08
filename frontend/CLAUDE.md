@@ -107,7 +107,7 @@ and starting fresh.
 
 ## No auth, by design
 
-Authentication is intentionally out of scope (see SPEC_UI.md
+Authentication is intentionally out of scope (see rfi_SPEC.md
 "What is deliberately out of scope"). The frontend never asks
 for a username, never stores a token, never talks to an OAuth
 provider. Deployment is expected to put SSO + a reverse proxy

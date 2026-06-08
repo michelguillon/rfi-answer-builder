@@ -9,7 +9,7 @@ Two models live here, deliberately separate:
   - `Row` — Q&A rows from Excel RFIs. Carries question/answer/context
     plus a per-file metadata dict. The structural vocabulary is "columns",
     not "formatting", so it is a separate model rather than a contorted
-    Paragraph. See models/row.py and docs/LEARNING_NOTES_RFI.md, entry 1.
+    Paragraph. See models/row.py and docs/rfi_LEARNING_NOTES.md, entry 1.
 
 Downstream code writes `from models import Paragraph, Row` and does not
 reach into the submodules.

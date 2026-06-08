@@ -31,7 +31,7 @@ paragraph. That would compile, but it would be semantically wrong:
 
 The principle: a common intermediate model works when all formats share
 the same structural vocabulary. When they don't, a second model is
-cleaner than a forced abstraction. See `docs/LEARNING_NOTES_RFI.md`,
+cleaner than a forced abstraction. See `docs/rfi_LEARNING_NOTES.md`,
 entry 1, for the rejected alternatives and the generalisable lesson.
 
 ARCHITECTURAL DECISION: pair_id is part of the model, not derived.

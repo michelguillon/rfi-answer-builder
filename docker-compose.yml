@@ -11,7 +11,7 @@
 #   to run the pipeline.profile module" instead of "use the pipeline
 #   service to run the pipeline.profile module" (same word twice).
 #
-#   The UI layer adds two more services (backend, frontend) — see SPEC_UI.md.
+#   The UI layer adds two more services (backend, frontend) — see rfi_SPEC.md.
 services:
   cli:
     build: .

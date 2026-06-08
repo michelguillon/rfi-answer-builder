@@ -94,7 +94,7 @@ directory. It is unguessable enough that a stranger cannot poke
 random session IDs to find one that exists, but it does NOT
 authenticate the user or grant access to corpus data.
 
-Auth is deliberately out of scope (see [SPEC_UI.md](../docs/SPEC_UI.md)
+Auth is deliberately out of scope (see [rfi_SPEC.md](../docs/rfi_SPEC.md)
 "What is deliberately out of scope"). The intended deployment
 puts SSO + a reverse proxy in front of FastAPI; session IDs
 serve only to disambiguate concurrent users behind that.
@@ -129,7 +129,7 @@ for the full upgrade rationale.
 ## Default config for the answer workflow
 
 When the answerer service runs, it uses the production-recommended
-configuration from [LEARNING_NOTES entry 13](../docs/LEARNING_NOTES_RFI.md):
+configuration from [LEARNING_NOTES entry 13](../docs/rfi_LEARNING_NOTES.md):
 
 - collection: `rfi_separated_cosine`
 - retrieval: `semantic`

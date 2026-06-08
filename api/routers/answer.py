@@ -135,7 +135,7 @@ async def process(session_id: str = Query(...)) -> StreamingResponse:
 # ARCHITECTURAL DECISION: edits are POSTed as their own step; the
 # export endpoint stays a plain GET.
 #
-# SPEC_UI Step 9's ExportButton calls "POST edits to backend then
+# rfi_SPEC Step 9's ExportButton calls "POST edits to backend then
 # GET /api/answer/export, trigger browser download". A GET-only
 # download has two practical advantages over a POST that returns
 # the file:

@@ -35,7 +35,7 @@ vary between files. Hard-coding "the question is always column B" is
 how this project would break the day a new RFI lands. So the profiler
 discovers the structure on every file and persists the discovered
 mapping. The next pipeline step reads that persisted mapping rather
-than re-discovering. See docs/LEARNING_NOTES_RFI.md, entry 2.
+than re-discovering. See docs/rfi_LEARNING_NOTES.md, entry 2.
 
 ARCHITECTURAL DECISION: three layers (heuristic → LLM → human),
 not one. Each layer catches a different failure mode:

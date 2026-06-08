@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 # lifetime. The lifespan form keeps startup and shutdown in one
 # place, can hold state in the contextmanager's local scope, and is
 # what FastAPI will still support five versions from now. The
-# SPEC_UI snippet showed the older @app.on_event form — modernised
+# rfi_SPEC snippet showed the older @app.on_event form — modernised
 # here without changing the contract.
 @asynccontextmanager
 async def lifespan(app: FastAPI):

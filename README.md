@@ -30,7 +30,7 @@ across a 36-configuration experiment matrix.
 client names verbatim — the LLM faithfully copies them from source
 Q&A pairs. Treat generated answers as draft-for-review, not
 send-to-client. The fix path is documented in
-`docs/LEARNING_NOTES_RFI.md` entry 14. Until fixed, adding
+`docs/rfi_LEARNING_NOTES.md` entry 14. Until fixed, adding
 *"do not name specific clients"* to the generation system prompt
 is a partial mitigation.
 
@@ -38,8 +38,8 @@ is a partial mitigation.
 
 | Layer | Status |
 |---|---|
-| Pipeline (CLI, ChromaDB, eval) | **Complete** — see `docs/SPEC_RFI_Standalone.md` |
-| Web UI (FastAPI + React + shadcn/ui) | **Complete** — see `docs/SPEC_UI.md` |
+| Pipeline (CLI, ChromaDB, eval) | **Complete** — see `docs/rfi_SPEC.md` |
+| Web UI (FastAPI + React + shadcn/ui) | **Complete** — see `docs/rfi_SPEC.md` |
 
 The pipeline is feature-complete with a 36-config production eval
 (LEARNING_NOTES entry 13). The UI wraps both workflows (ingest +
@@ -65,7 +65,7 @@ The UI is two workflows (Add RFI to corpus, Answer a new RFI)
 plus per-RFI delete on the Landing page. **Authentication is
 deliberately out of scope** — the UI is designed to sit behind
 your organisation's existing SSO + reverse proxy. See
-`docs/SPEC_UI.md` "What is deliberately out of scope" for the
+`docs/rfi_SPEC.md` "What is deliberately out of scope" for the
 intended deployment topology.
 
 ## Production deployment
@@ -187,7 +187,7 @@ docker compose run --rm cli python -m pipeline.query \
 
 The retrieval pool, reranked top-k, and paired answers are printed
 with scores and source attribution **before** the generated answer.
-That visibility is deliberate — see `docs/LEARNING_NOTES_RFI.md`
+That visibility is deliberate — see `docs/rfi_LEARNING_NOTES.md`
 entries 12 and 13 for the reasoning.
 
 Available flags:
@@ -220,7 +220,7 @@ create this file with the schema shown in `pipeline.evaluate`'s
 
 ## Production recommendation
 
-From the eval matrix (see `docs/LEARNING_NOTES_RFI.md` entry 13):
+From the eval matrix (see `docs/rfi_LEARNING_NOTES.md` entry 13):
 
 > **`rfi_separated_cosine` + `semantic` + `crossencoder` + top-k=3**
 
@@ -272,9 +272,11 @@ layers (see `api/CLAUDE.md`).
 | `pipeline/CLAUDE.md` | Pipeline-layer rules: dual CLI+import contract, openpyxl conventions, checkpoint discipline |
 | `api/CLAUDE.md` | Backend-layer rules: SSE event format, filesystem-backed sessions, "import not subprocess", no-auth-by-design |
 | `frontend/CLAUDE.md` | Frontend-layer rules: shadcn-first, useSSE hook contract, verbose provenance mandate, cross-tenant warning placement |
-| `docs/SPEC_RFI_Standalone.md` | Pipeline spec — every architectural decision and 7 ordered build steps |
-| `docs/SPEC_UI.md` | UI spec — same shape, 9 ordered build steps + 9.5 corpus delete |
-| `docs/LEARNING_NOTES_RFI.md` | 26 entries explaining *why* each non-obvious decision was made, alternatives rejected, and the empirical findings from running on real data |
+| `docs/rfi_SPEC.md` | Full specification — both layers in one document: the CLI pipeline (Phase 1, 7 ordered build steps) and the web UI (Phase 2, 9 steps + 9.5 corpus delete). Single source of truth for *what* to build |
+| `docs/rfi_LEARNING_NOTES.md` | 27 entries explaining *why* each non-obvious decision was made, alternatives rejected, and the empirical findings from running on real data |
+| `docs/rfi_TOP10_LEARNINGS.md` | The ten most transferable insights, distilled for interview / portfolio conversations |
+| `docs/rfi_RETROSPECTIVE.md` | Project retrospective — the operational framing, what worked, what I'd do differently, and outcomes |
+| `docs/rfi_ARCHITECTURE.html` | Standalone interactive architecture diagram — open in a browser |
 
 Read the learning notes for the *why*; read the spec for the *what*.
 
@@ -297,7 +299,7 @@ frontend/dist/                                  (built bundle — regenerated in
 
 The fake `data/sample_rfi.xlsx` is the only explicit exception. If
 the repo is ever made public (the UI's "Public repo preparation"
-plan in `docs/SPEC_UI.md` covers this), it should ship with sample
+plan in `docs/rfi_SPEC.md` covers this), it should ship with sample
 data only.
 
 ## Stack
@@ -323,7 +325,7 @@ This is built as an exploration of production-grade RAG patterns,
 not as a polished shippable product. Every architectural decision
 has an `ARCHITECTURAL DECISION:` comment block in the relevant
 source file **and** a matching entry in
-`docs/LEARNING_NOTES_RFI.md` explaining alternatives considered and
+`docs/rfi_LEARNING_NOTES.md` explaining alternatives considered and
 the load-bearing reason for the choice. Many of those entries
 include empirical findings from running on real data — including
 several places where the spec's intuitions turned out to be wrong

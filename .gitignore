@@ -55,7 +55,7 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# --- UI layer (SPEC_UI.md) -----------------------------------------------
+# --- UI layer (rfi_SPEC.md) -----------------------------------------------
 # Per-session uploads, profiles, configs, answers, outputs live here.
 # Cleaned up by the backend on a 24h schedule. Never commit — the files
 # include uploaded RFIs and generated answers.
