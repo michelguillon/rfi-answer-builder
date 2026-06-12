@@ -3031,4 +3031,94 @@ shows during the load it describes is worse than none — it looks
 correct in code review and fails exactly when it's needed.
 
 
+## 29. CPU-only torch — don't ship the CUDA stack to a GPU-less host
+
+**Context.** `sentence-transformers` (our cross-encoder reranker)
+depends on `torch`. From the default PyPI index, `pip install torch`
+resolves to the **CUDA** build, which transitively pulls ~2GB of
+`nvidia_*` wheels (cuSOLVER ~200MB, cuBLAS, cuDNN, cuFFT, NCCL, ...).
+Those exist to run tensors on an NVIDIA GPU. The deployment target —
+the Lenovo M720q home server — has no GPU. So every byte of that 2GB
+was dead weight: it bloated the image and turned a clean backend
+rebuild into a ~5-minute, 2GB download. This surfaced during a
+routine prod update when a `docker compose ... up -d --build`
+rebuilt the backend image and the pip layer cache missed, so the
+CUDA wheels re-downloaded from scratch on the home server's
+connection.
+
+**The fix.** Install CPU-only torch from the PyTorch CPU index
+*before* the main requirements pass, in [Dockerfile](../Dockerfile):
+
+```dockerfile
+COPY requirements.txt .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir -r requirements.txt
+```
+
+The first install pins `torch` to the `+cpu` wheel. The second pass
+(`-r requirements.txt`) sees the `torch` requirement already
+satisfied and never reaches for the CUDA variant. `sentence-
+transformers` and everything downstream install normally against the
+CPU torch.
+
+**Why order matters.** This only works because the CPU install runs
+*first*. If `-r requirements.txt` ran first, pip would resolve
+`torch` to the CUDA default before we ever got a chance to pin it,
+and the explicit CPU install afterwards would be a no-op (requirement
+already satisfied) or a costly reinstall. "Pin the heavy, opinionated
+transitive dependency before the pass that would otherwise resolve it
+the expensive way" is the reusable shape.
+
+**Verification.** `docker compose build cli` then an import smoke
+test inside the container:
+
+```
+torch version : 2.12.0+cpu      # the +cpu suffix is the tell
+cuda available: False
+sentence-transformers: 5.5.1
+CrossEncoder import OK
+pipeline.query rerank_crossencoder import OK
+```
+
+The `+cpu` build tag and `cuda.is_available() == False` confirm the
+CUDA stack is gone; the import chain confirms nothing downstream
+broke. The `cli` image came out at ~2.4GB (it would have been ~4.5GB
+with the CUDA wheels). Build time for the torch step dropped from
+~5 minutes to under a minute.
+
+**This changes build cost, not runtime behaviour.** Inference was
+already CPU-only — there was no GPU for the CUDA build to use, so the
+model ran on CPU regardless. Removing the CUDA libraries removes
+unused code paths, not capability. The reranker produces identical
+scores.
+
+**What it teaches.**
+
+The general lesson is broader than torch: **ML Python packages often
+default to the heaviest possible build, optimised for the cloud-GPU
+case, and you pay for it silently on every CPU-only deployment.**
+torch is the famous example, but the same trap exists for
+`onnxruntime-gpu` vs `onnxruntime`, `faiss-gpu` vs `faiss-cpu`,
+`tensorflow` vs `tensorflow-cpu`, and JAX's CUDA extras. The default
+is "assume a GPU"; a GPU-less box (home server, small VPS, CI runner,
+most laptops) wants the CPU variant explicitly.
+
+The cost of the default isn't visible until something invalidates the
+layer cache — a base-image bump, a requirements edit, a `--build` on
+a fresh machine — and then you eat a multi-GB download at exactly the
+wrong moment (mid-deploy, on a slow connection). The fix is cheap and
+permanent; the habit worth carrying to other projects is: **when a
+dependency tree includes torch / tensorflow / onnxruntime / faiss /
+jax and the target has no GPU, pin the CPU build in the Dockerfile
+before it resolves the GPU one by default.**
+
+Operational corollary that bit us here: `docker compose up --build`
+rebuilds *every* service with a build context, including ones that
+didn't change. When only the frontend's static bundle needs
+rebuilding, scope it — `up -d --build frontend` — and recreate the
+bind-mounted backend without `--build` (it picks up new code from the
+mount and new env from the recreate). An unscoped `--build` is how a
+2GB torch reinstall got triggered for a change that never touched
+Python dependencies.
+
 

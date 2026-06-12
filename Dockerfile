@@ -13,6 +13,19 @@ WORKDIR /app
 #   dependency list — putting the (slow) pip install before the source
 #   copy means editing a .py file does NOT trigger a reinstall.
 COPY requirements.txt .
+
+# DECISION: install CPU-only torch from the PyTorch CPU index BEFORE
+# the main requirements pass.
+#   sentence-transformers (our cross-encoder reranker) depends on torch.
+#   From the default PyPI index, torch resolves to the CUDA build, which
+#   drags in ~2GB of nvidia_* wheels (cuSOLVER, cuBLAS, cuDNN, ...). The
+#   deployment target is a GPU-less Lenovo M720q, so every one of those
+#   bytes is dead weight: it bloats the image and turns a clean rebuild
+#   into a 5-minute, 2GB download. Installing the CPU wheel first pins
+#   torch, so the subsequent `-r requirements.txt` sees the requirement
+#   already satisfied and never pulls the CUDA variant. Inference is
+#   CPU-only either way — this changes build cost, not runtime behaviour.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the project. .dockerignore keeps .env, .git, the
