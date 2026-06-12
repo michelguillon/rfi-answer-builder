@@ -3030,6 +3030,49 @@ first-event, not before header-flush. A loading indicator that never
 shows during the load it describes is worse than none — it looks
 correct in code review and fails exactly when it's needed.
 
+**Addendum (measured in prod): the idle floor is torch, not "~50MB".**
+A month after shipping, the home-server backend was observed sitting at
+~502MB long after the TTL should have evicted — "eviction is broken?"
+It is not. The prod logs showed `ChromaDB idle TTL exceeded — evicting`
+→ `ChromaDB unloaded` firing correctly; the client *was* released. The
+502MB is something eviction was never going to touch. Measured RSS,
+loading each piece in turn in the container:
+
+| After… | RSS | Δ |
+|---|---|---|
+| bare python | 8MB | — |
+| `import torch` | 220MB | **+212MB** |
+| `import sentence_transformers` | 412MB | **+192MB** |
+| load MiniLM cross-encoder weights | 460MB | +48MB |
+| load ChromaDB (tiny dev corpus) | 499MB | +39MB |
+
+So ~460MB of the footprint is **torch + sentence-transformers**, pulled
+in by `rerank_crossencoder` on the *first answer*. Once `libtorch_cpu.so`
+is mapped into the process it stays resident for the process lifetime —
+`unload_chroma()` releases ChromaDB, never torch. ChromaDB is the
+*variable* part (active ~1.2GB on the real corpus → idle ~500MB); the
+~500MB floor is torch and is fixed while the process lives.
+
+The original spec's "~50MB idle" target (and the matching claims in
+api/CLAUDE.md, .env.example, api/main.py, rfi_SPEC.md) were therefore
+wrong and have been corrected: "~50MB" only holds *before the first
+answer imports torch*. The lesson worth carrying: **before quoting an
+"idle floor" for a process, account for every heavyweight library it
+imports, not just the one you're optimising.** A second in-process
+heavyweight (here, torch — bigger and *less* reclaimable than the thing
+we built eviction for) silently sets the real floor. Eviction still
+earns its keep by reclaiming the ~700MB ChromaDB swing — the mistake was
+only in the advertised number, not the mechanism.
+
+*If the torch floor ever does need reclaiming* (it doesn't today — 502MB
+is 3% of the 15.5GB box, and the app is a demo under active development),
+the only real lever is to move cross-encoder reranking into a short-lived
+subprocess that imports torch, reranks, and exits — reclaiming ~410MB
+between answers at the cost of ~2–3s torch-import cold-start per answer.
+Not worth it until backend RAM is genuinely scarce. Captured here so
+future-me doesn't re-derive the whole investigation from the same "502MB,
+is eviction broken?" starting point.
+
 
 ## 29. CPU-only torch — don't ship the CUDA stack to a GPU-less host
 

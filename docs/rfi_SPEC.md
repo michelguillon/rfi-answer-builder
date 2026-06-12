@@ -683,8 +683,11 @@ a third entry point.
   aren't blocked for the full load.
 - **Idle eviction:** a `daemon=True` thread started in `lifespan()` wakes every 60s
   and, after `CHROMA_IDLE_TTL_SECONDS` of inactivity, drops the client + `gc.collect()`.
-  Idle footprint returns toward ~50MB (native DuckDB/hnswlib allocators may retain
-  some pages — the drop is meaningful, not necessarily complete).
+  This reclaims ChromaDB's **variable** footprint (active ~1.2GB → idle ~500MB on the
+  real corpus). It does NOT reclaim the ~460MB torch + cross-encoder reranker floor,
+  which loads on the first answer and is resident for the process lifetime; "~50MB
+  idle" only holds before any answer runs. See rfi_CHROMA_LAZY_LOAD_SPEC.md's
+  measured-reality note + LEARNING_NOTES entry 28.
 - **`CHROMA_IDLE_TTL_SECONDS`** (default 300) tunes the TTL; `0` disables eviction
   entirely (load once, never release — the thread isn't started).
 - **Frontend:** `useSSE` exposes `isSlowLoad`, set after 2s of an open-but-silent

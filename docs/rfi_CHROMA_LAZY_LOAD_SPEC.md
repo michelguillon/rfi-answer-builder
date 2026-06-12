@@ -20,8 +20,21 @@ any query is running.
 
 | Property | Target |
 |---|---|
-| Idle memory | ~50MB (FastAPI process only, no ChromaDB) |
+| Idle memory, before any answer | ~50–80MB (FastAPI/uvicorn; torch not yet imported) |
+| Idle memory, after answering | **~500MB floor** (torch + cross-encoder reranker resident; ChromaDB evicted) |
 | Active memory | ~1.2GB (same as today) |
+
+> **Measured-reality correction (post-implementation).** The original target
+> for this row read simply "~50MB idle", which was wrong: it assumed ChromaDB
+> was the only heavyweight in the process. It is not. The cross-encoder reranker
+> (`pipeline.query.rerank_crossencoder`) imports **torch** on the first answer,
+> and once `libtorch_cpu.so` is mapped the process holds ~460MB for its lifetime
+> regardless of ChromaDB. So "~50MB" only holds *before the first answer*; after
+> that the idle floor is torch (~500MB), and eviction reclaims ChromaDB's
+> **variable** share on top of it (active ~1.2GB → idle ~500MB). Measured
+> breakdown in LEARNING_NOTES entry 28. Eviction still earns its keep — it
+> reclaims the ~700MB ChromaDB swing — but it was never going to touch the
+> torch floor.
 | First-query latency after idle | 5–10s (user is informed) |
 | Subsequent query latency | Unchanged |
 | Memory reclaim | Automatic after `CHROMA_IDLE_TTL_SECONDS` of inactivity |
@@ -59,6 +72,9 @@ eviction cycle to establish the actual baseline for your corpus size.
 
 ### Startup
 ChromaDB is not loaded. The process footprint is ~50MB (FastAPI + uvicorn alone).
+This holds only until the first answer: `rerank_crossencoder` imports torch, which
+adds a permanent ~460MB floor for the rest of the process life (see the Goal table's
+measured-reality note).
 
 ### Cold request (first request, or first after idle eviction)
 `get_chroma_client()` initialises `chromadb.PersistentClient`, loads all collections
@@ -307,7 +323,8 @@ Always use get_chroma_client() from api/chroma_client.py.
 - [ ] `CHROMA_IDLE_TTL_SECONDS` in `.env.example` with comment
 - [ ] Frontend shows cold-start message after 2s of in-flight request
 - [ ] `api/CLAUDE.md` updated with no-direct-PersistentClient rule
-- [ ] `docker compose up backend` → process starts at ~50MB RSS
+- [ ] `docker compose up backend` → process starts at ~50MB RSS (before the first
+      answer imports torch; the post-answer idle floor is ~500MB — see Goal table)
 - [ ] First query takes 5–10s and logs "ChromaDB loaded (Xs)"
 - [ ] Second query is instant
 - [ ] After TTL seconds idle, logs "ChromaDB unloaded" and RSS drops

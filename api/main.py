@@ -50,8 +50,11 @@ async def lifespan(app: FastAPI):
 
     # ChromaDB lazy load + idle eviction. The client is NOT loaded here —
     # it cold-loads on the first request (see api/chroma_client.py). This
-    # thread only reclaims it after CHROMA_IDLE_TTL seconds of inactivity,
-    # so an idle backend drops back to ~50MB instead of pinning ~1.2GB.
+    # thread reclaims ChromaDB after CHROMA_IDLE_TTL seconds of inactivity:
+    # the VARIABLE part of the footprint (active ~1.2GB on the real corpus
+    # → idle ~500MB). It does NOT reclaim the torch + cross-encoder
+    # reranker, which loads on the first answer and stays resident
+    # (~460MB) for the process lifetime — see LEARNING_NOTES entry 28.
     # daemon=True so it never blocks process shutdown; TTL=0 disables
     # eviction entirely and the thread is not started.
     if CHROMA_IDLE_TTL > 0:

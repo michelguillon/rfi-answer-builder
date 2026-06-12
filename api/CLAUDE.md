@@ -45,8 +45,12 @@ layer. Always use `get_chroma_client()` from
 
 The API layer lazy-loads ChromaDB on first request and a daemon
 thread evicts it after `CHROMA_IDLE_TTL_SECONDS` of inactivity, so
-an idle backend drops from ~1.2GB to ~50MB instead of pinning the
-store for the process lifetime. That only works if every caller
+an idle backend releases ChromaDB's footprint (active ~1.2GB on the
+real corpus → idle ~500MB) instead of pinning the store for the
+process lifetime. (The ~500MB floor is torch + the cross-encoder
+reranker, which loads on the first answer and is NOT reclaimable
+in-process — see LEARNING_NOTES entry 28. Eviction reclaims the
+ChromaDB part, not that floor.) That only works if every caller
 shares the one reclaimable client. A direct `PersistentClient(...)`
 opens a second, unmanaged handle that is never evicted and defeats
 the whole mechanism. The existing `asyncio.to_thread(...)` wrapping
