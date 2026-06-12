@@ -2914,5 +2914,121 @@ decision turns "production incident → architecture redesign"
 into "trigger fired → execute the documented upgrade".
 
 
+## 28. ChromaDB made a lazy, reclaimable resource (lazy load + idle eviction)
+
+**Context.** The API layer created a `chromadb.PersistentClient` at
+first use and held it for the process lifetime. On the M720q home
+server (entry 26) the backend runs `restart: unless-stopped` and
+survives for weeks, so that one client pinned ~1.2GB of RAM
+indefinitely after the first request — whether or not anyone was
+querying. As more apps land on the same box, idle memory becomes a
+compounding cost across every tenant. The spec
+(docs/rfi_CHROMA_LAZY_LOAD_SPEC.md) reframes ChromaDB from "a thing
+we hold" to "a reclaimable resource": load on demand, release when
+idle. This is the same shape entry 27 applied to session cleanup —
+the long-uptime deployment profile broke an assumption ("the process
+is short-lived, who cares about idle memory") that was fine for a
+dev tool.
+
+**Decisions made in code, with the load-bearing reasoning.**
+
+*One shared client behind `get_chroma_client()`, never a direct
+constructor in `api/`.* All four API call sites (answerer, ingester,
+corpus stats, corpus delete) now go through the accessor in
+[api/chroma_client.py](../api/chroma_client.py). The whole eviction
+mechanism rests on there being exactly one reclaimable handle; a
+stray `PersistentClient(...)` would open a second, unmanaged client
+that never gets evicted and silently defeats the reclaim. The rule
+is now in api/CLAUDE.md so the next contributor doesn't reintroduce
+a direct construction. The `pipeline/` modules are deliberately
+untouched — CLI runs are one-shot processes that exit in seconds, so
+lazy eviction buys them nothing and would only add complexity.
+
+*`threading.Lock`, not `asyncio.Lock`.* Every ChromaDB call already
+runs in a thread-pool worker via `asyncio.to_thread()`, and the
+idle-cleanup thread is a plain (non-async) `threading.Thread`. An
+asyncio lock cannot be acquired from that non-async context at all.
+A threading lock is the one primitive both the async call sites
+(through to_thread) and the cleanup thread can share.
+
+*Double-checked init with the cold load OUTSIDE the lock, not a
+`threading.Condition`.* A Condition would serialise concurrent cold
+starts so only one request builds the client while the others wait.
+For a single-user demo, two requests landing inside the same ~5s
+cold-load window is not a realistic scenario, so paying for that
+guarantee isn't worth the complexity. The plain-lock shape takes the
+lock only for the cheap pointer checks/assignments and releases it
+for the expensive 5–10s `PersistentClient(...)` build, so a second
+request is never blocked for the full load. In the rare race, both
+build a client and the second one's is discarded (`if _chroma_client
+is None`) — correct, just mildly wasteful, which for this deployment
+is the right trade.
+
+*The cleanup thread lives in the lifespan, gated on `TTL > 0`,
+`daemon=True`.* Starting it in the FastAPI lifespan (next to the
+session-cleanup task from entry 27) keeps all background lifecycle
+in one place. `daemon=True` means it never blocks process shutdown —
+there is no state to flush, so a hard stop is fine. `TTL=0` is the
+documented escape hatch ("load once, never evict"): the thread isn't
+started at all, and `_cleanup_loop` also returns immediately if it
+ever is — belt and suspenders so the disable path can't accidentally
+spin.
+
+*Eviction reads `last_used` inside the lock but calls
+`unload_chroma()` (which does `gc.collect()`) outside it.* Same
+discipline as the cold load: hold the lock only for the cheap idle
+check, do the potentially-slow GC without blocking request threads.
+
+*Frontend cold-start hint keyed off first-event, not fetch
+resolution.* Starlette's `StreamingResponse` flushes the SSE
+response headers BEFORE it iterates the generator body — so the
+browser's `await fetch` resolves immediately, while the actual
+ChromaDB cold load happens inside the first body iteration, several
+seconds later. Clearing the "initialising…" hint on fetch resolution
+would therefore clear it instantly and never show it during the load
+it exists to explain. The hook (`useSSE`, isSlowLoad) instead starts
+a 2s timer on `start()` and clears it on the FIRST event — which for
+the cold path doesn't arrive until ChromaDB is loaded. That makes the
+hint's lifetime exactly the silent-stream window, which is what the
+user actually experiences as "stuck".
+
+**Verification.** On this dev corpus (279 pairs):
+`docker compose run -e CHROMA_IDLE_TTL_SECONDS=65 --service-ports
+backend`, idle RSS ~174MiB with no cold-load line in the logs
+(ChromaDB genuinely not loaded at startup). First
+`GET /api/corpus/stats` logs `ChromaDB cold load starting` →
+`ChromaDB loaded (1.1s)`; second call is instant with no new log.
+~120s idle later (the daemon checks every 60s, so the eviction fires
+on the first check past the 65s TTL) the logs show `ChromaDB idle
+TTL exceeded — evicting` → `ChromaDB unloaded`.
+
+Note the RSS numbers here are small (idle ~174MiB, active ~185MiB)
+because this dev corpus is tiny — 279 pairs of 1024-dim embeddings.
+The spec's ~1.2GB headline is the home-server corpus, which is much
+larger; the eviction *mechanism* is identical regardless of corpus
+size, and the spec is explicit that native C++ allocators (DuckDB,
+hnswlib) may not return every page to the OS immediately — RSS drops
+meaningfully, not necessarily to the bare floor.
+
+**What it teaches.**
+
+Two ideas. First, the *altitude* of a resource decision depends on
+the deployment, not the code. Holding a 1.2GB client forever is
+completely fine for a CLI that runs for 8 seconds and exits, and
+completely wrong for a process that runs for three weeks next to
+four other apps on a 8GB box. The code didn't change what's
+"correct" — the uptime profile did. Same lesson as entry 27, now for
+memory instead of disk.
+
+Second, "show a loading hint when it's slow" is only correct if you
+know *where in the transport the slowness actually lives*. The naive
+implementation (hint until the request resolves) would have been
+silently wrong for SSE specifically, because the streaming response
+resolves its promise before the slow work runs. The fix required
+understanding that the cold load sits between header-flush and
+first-event, not before header-flush. A loading indicator that never
+shows during the load it describes is worse than none — it looks
+correct in code review and fails exactly when it's needed.
+
 
 

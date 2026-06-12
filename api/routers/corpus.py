@@ -16,10 +16,10 @@ import json
 import re
 from pathlib import Path
 
-import chromadb
 from fastapi import APIRouter, HTTPException, Query
 
-from pipeline.ingest import CHROMA_PATH, COLLECTIONS
+from api.chroma_client import get_chroma_client
+from pipeline.ingest import COLLECTIONS
 
 router = APIRouter(prefix="/api/corpus", tags=["corpus"])
 
@@ -50,7 +50,7 @@ def _slugify(filename: str) -> str:
 
 
 def _read_stats() -> dict:
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    client = get_chroma_client()
     try:
         coll = client.get_collection(STATS_COLLECTION)
     except Exception as exc:
@@ -118,7 +118,7 @@ def _delete_rfi(source_file: str) -> dict:
     if not source_file or "/" in source_file or "\\" in source_file:
         raise HTTPException(400, f"Invalid source_file: {source_file!r}")
 
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    client = get_chroma_client()
 
     chunks_removed: dict[str, int] = {}
     for coll_name in COLLECTIONS:

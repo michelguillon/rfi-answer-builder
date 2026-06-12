@@ -59,6 +59,10 @@ services:
       - .:/app
     environment:
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      # ChromaDB idle eviction (see api/chroma_client.py). Read from .env,
+      # default 300s. The prod compose's backend inherits this block, so
+      # setting CHROMA_IDLE_TTL_SECONDS in .env reaches both. 0 disables.
+      - CHROMA_IDLE_TTL_SECONDS=${CHROMA_IDLE_TTL_SECONDS:-300}
     ports:
       - "8000:8000"
 

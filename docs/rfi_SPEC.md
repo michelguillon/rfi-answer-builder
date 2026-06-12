@@ -481,7 +481,9 @@ Docker Compose       ← three services: frontend, backend, shared volumes
 - FastAPI: the pipeline is already Python. FastAPI wraps it with minimal friction and has
   native SSE support.
 - SSE over WebSockets: one-directional streaming is all we need. SSE is simpler (no
-  handshake, no library), natively supported by FastAPI and the browser's EventSource API.
+  handshake, no library), natively supported by FastAPI. GET streams could use the
+  browser's EventSource API directly, but the POST streams (approve) can't — so the
+  frontend reads all SSE over fetch + ReadableStream uniformly (see `src/lib/sse.ts`).
 - Session temp directories over a database: single-purpose internal tool, filesystem state
   is auditable and requires no additional infrastructure.
 
@@ -495,6 +497,8 @@ Browser
   ├── GET /                    React app (served by Vite dev or nginx)
   │
   ├── POST /api/sessions        Create session → session_id
+  │
+  ├── GET  /api/corpus/stats    Corpus summary (pairs, source files) for landing page
   │
   ├── POST /api/ingest/upload   Upload Excel → save to tmp/{session_id}/
   │
@@ -518,10 +522,13 @@ Browser
   │                                 refused, mentioned_clients}}
   │       {type: "done"}
   │
-  ├── POST /api/ingest/delete   Remove an RFI from the corpus by source_file
+  ├── POST /api/answer/edit     Persist per-answer edits + skips → answers.json
+  │     body: {session_id, overrides, skipped}
   │
-  └── GET  /api/answer/export   Download filled Excel
-        → streams the file (accepts per-question answer overrides in body)
+  ├── DELETE /api/corpus/rfi    Remove an RFI from the corpus by source_file
+  │
+  └── GET  /api/answer/export   Download filled Excel — rebuilt from answers.json
+        (which /edit has already updated); streams the file
 ```
 
 ---
@@ -611,12 +618,14 @@ sends edits to backend, triggers Excel download.
 
 ```
 api/
-  main.py              ← FastAPI app, mounts routers, lifespan (cleanup)
+  main.py              ← FastAPI app, mounts routers, lifespan (cleanup + chroma idle thread)
+  chroma_client.py     ← lazy-loaded, idle-evicted shared ChromaDB client (see below)
   CLAUDE.md            ← backend-specific Claude Code conventions
   routers/
-    sessions.py        ← POST /api/sessions, GET /api/corpus/stats
-    ingest.py          ← upload, profile (SSE), approve (SSE), delete
-    answer.py          ← upload, process (SSE), export
+    sessions.py        ← POST /api/sessions
+    corpus.py          ← GET /api/corpus/stats, DELETE /api/corpus/rfi
+    ingest.py          ← upload, profile (SSE), approve (SSE)
+    answer.py          ← upload, process (SSE), edit, export
   services/
     profiler.py        ← wraps pipeline.profile as async generator
     ingester.py        ← wraps pipeline.ingest as async generator
@@ -651,6 +660,44 @@ a third entry point.
 
 ---
 
+## ChromaDB lazy loading + idle eviction (API layer)
+
+> **Deviation from the original Phase 2 design, added post-handover.**
+> The original spec implied the conventional shape: each service opened a
+> `chromadb.PersistentClient` and the process held it for its lifetime. On the
+> home-server deployment (entry 26, `restart: unless-stopped`, weeks of uptime)
+> that pinned ~1.2GB of RAM indefinitely after the first request, idle or not —
+> a compounding cost as more apps share the M720q. The API layer now treats
+> ChromaDB as a **reclaimable** resource. Full spec:
+> [rfi_CHROMA_LAZY_LOAD_SPEC.md](rfi_CHROMA_LAZY_LOAD_SPEC.md); rationale:
+> LEARNING_NOTES entry 28. This is the same "deployment profile broke an
+> assumption" upgrade as entry 27's session cleanup.
+
+- **One shared client behind `api/chroma_client.py::get_chroma_client()`.** Every
+  API call site (answerer, ingester, corpus stats, corpus delete) goes through it;
+  a direct `chromadb.PersistentClient(...)` in `api/` is now banned (api/CLAUDE.md)
+  because it opens a second, unmanaged handle the evictor can't reclaim.
+- **Cold load on first use** (~5–10s on the real corpus), warm thereafter. A
+  `threading.Lock` (not `asyncio.Lock` — the cleanup thread is non-async) guards
+  the client; the cold build happens *outside* the lock so concurrent requests
+  aren't blocked for the full load.
+- **Idle eviction:** a `daemon=True` thread started in `lifespan()` wakes every 60s
+  and, after `CHROMA_IDLE_TTL_SECONDS` of inactivity, drops the client + `gc.collect()`.
+  Idle footprint returns toward ~50MB (native DuckDB/hnswlib allocators may retain
+  some pages — the drop is meaningful, not necessarily complete).
+- **`CHROMA_IDLE_TTL_SECONDS`** (default 300) tunes the TTL; `0` disables eviction
+  entirely (load once, never release — the thread isn't started).
+- **Frontend:** `useSSE` exposes `isSlowLoad`, set after 2s of an open-but-silent
+  stream and cleared on the first event (not on `fetch` resolution — Starlette
+  flushes SSE headers before the cold load runs). Answer + Ingest show a
+  "system is initialising" hint while it's true.
+
+**`pipeline/` is unchanged.** CLI runs are one-shot processes that exit in seconds,
+so lazy eviction buys them nothing — they keep creating their own short-lived
+`PersistentClient` directly. Lazy loading is an API-layer concern only.
+
+---
+
 ## Docker Compose — three services
 
 ```yaml
@@ -674,6 +721,7 @@ services:
       - ./tmp:/app/tmp
     environment:
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - CHROMA_IDLE_TTL_SECONDS=${CHROMA_IDLE_TTL_SECONDS:-300}  # idle eviction; 0 disables
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -710,9 +758,11 @@ rfi-answer-builder/
 ├── api/                         ← FastAPI backend
 │   ├── CLAUDE.md
 │   ├── main.py
+│   ├── chroma_client.py         ← lazy-loaded, idle-evicted ChromaDB client
 │   ├── session.py
 │   ├── routers/
 │   │   ├── sessions.py
+│   │   ├── corpus.py
 │   │   ├── ingest.py
 │   │   └── answer.py
 │   └── services/
@@ -780,14 +830,16 @@ rfi-answer-builder/
 > Save all answers to tmp/{sid}/answers.json on done.
 
 ### Step 5 — Export service
-> POST /api/answer/export accepts per-question answer overrides in body.
+> POST /api/answer/edit persists per-question overrides + skips into answers.json;
+> GET /api/answer/export then rebuilds the workbook from that file and streams it.
 > Appends three columns to original Excel: "Suggested Answer", "Source RFIs", "Confidence".
 > Preserves all original columns and formatting (openpyxl, data_only=True).
 > Streams file as download response.
 
 ### Step 6 — Frontend scaffold
 > Vite + TypeScript + shadcn/ui. `src/lib/api.ts` typed fetch wrappers.
-> `src/lib/sse.ts` typed EventSource hook: `useSSE(url, onEvent, onDone)`.
+> `src/lib/sse.ts` typed SSE hook over fetch + ReadableStream (POST-capable, unlike
+> EventSource): `useSSE()` → `{events, status, error, isSlowLoad, start, reset}`.
 > Stub pages: Landing, Ingest, Answer. React Router with /, /ingest, /answer.
 > Verify: docker compose up → all three routes render without errors.
 
@@ -807,7 +859,7 @@ rfi-answer-builder/
 > Review table with status badges. ExportButton sends edits + triggers download.
 
 ### Step 9.5 — Per-RFI delete
-> POST /api/ingest/delete: accept {source_file}, remove chunks from all 4 collections,
+> DELETE /api/corpus/rfi: accept {source_file}, remove chunks from all 4 collections,
 > delete config_rfi_<slug>.json, remove checkpoint entry, delete data/<file>.
 > Surface in the Landing page as a delete button per source RFI in the corpus stats.
 
@@ -860,6 +912,7 @@ docker compose run --rm cli python -m pipeline.evaluate
 - [x] Answer cards editable before export
 - [x] Client-name leakage flagged on answer cards
 - [x] Per-RFI delete from corpus
+- [x] ChromaDB lazy load + idle eviction in the API layer (reclaimable memory)
 - [x] Production deployment: .dockerignore, docker-compose.prod.yml, nginx.conf
 - [x] Auth omission documented in README + SPEC + api/CLAUDE.md
 - [ ] Sample data for public demo (deferred — requires sanitised repo)
@@ -874,6 +927,10 @@ docker compose run --rm cli python -m pipeline.evaluate
   Priority increases if the tool is used more widely.
 - Reference document layer: if a context document is added, does two-stage retrieval
   outperform single-corpus retrieval?
+- ChromaDB server mode: if a second app on the M720q needs vector search, run one
+  shared ChromaDB service (HTTP client) instead of two embedded instances. At that
+  point the API-layer idle eviction becomes moot — the server is always-on and
+  shared. See rfi_CHROMA_LAZY_LOAD_SPEC.md.
 - Scanned PDF support: requires OCR layer, deferred.
 - LLM-as-judge calibration: explicit anchor rubric or paired-comparison would make
   faithfulness/relevance discriminating rather than ceiling-scored.

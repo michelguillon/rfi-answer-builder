@@ -227,6 +227,7 @@ export default function Answer() {
         latestProgress={latestProgress}
         total={session?.question_count ?? 0}
         sseError={answerSSE.status === "error" ? answerSSE.error : null}
+        isSlowLoad={answerSSE.isSlowLoad}
         onStartOver={onStartOver}
       />
 
@@ -347,12 +348,14 @@ function ProcessingHeader({
   latestProgress,
   total,
   sseError,
+  isSlowLoad,
   onStartOver,
 }: {
   session: AnswerUploadResponse | null;
   latestProgress: { index: number; total: number; question_text: string } | null;
   total: number;
   sseError: string | null;
+  isSlowLoad: boolean;
   onStartOver: () => void;
 }) {
   const current = latestProgress?.index ?? 0;
@@ -402,6 +405,12 @@ function ProcessingHeader({
           </span>
         </div>
         <Progress value={pct} />
+        {isSlowLoad && (
+          <p className="text-sm text-muted-foreground pt-2">
+            Searching knowledge base… First query may take a few seconds
+            while the system initialises.
+          </p>
+        )}
         {sseError && (
           <p className="text-sm text-destructive pt-2">
             Stream error: {sseError}

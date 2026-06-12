@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from api.chroma_client import CHROMA_IDLE_TTL, _cleanup_loop
 from api.routers import answer, corpus, ingest, sessions
 from api.session import cleanup_old_sessions, cleanup_periodically
 
@@ -45,6 +47,23 @@ async def lifespan(app: FastAPI):
     # is what actually bounds growth between restarts. See
     # api/session.py and LEARNING_NOTES entry 27 for the rationale.
     cleanup_task = asyncio.create_task(cleanup_periodically())
+
+    # ChromaDB lazy load + idle eviction. The client is NOT loaded here —
+    # it cold-loads on the first request (see api/chroma_client.py). This
+    # thread only reclaims it after CHROMA_IDLE_TTL seconds of inactivity,
+    # so an idle backend drops back to ~50MB instead of pinning ~1.2GB.
+    # daemon=True so it never blocks process shutdown; TTL=0 disables
+    # eviction entirely and the thread is not started.
+    if CHROMA_IDLE_TTL > 0:
+        t = threading.Thread(
+            target=_cleanup_loop,
+            daemon=True,
+            name="chroma-idle-cleanup",
+        )
+        t.start()
+        logger.info("ChromaDB idle cleanup thread started (TTL=%ds)", CHROMA_IDLE_TTL)
+    else:
+        logger.info("ChromaDB idle cleanup disabled (CHROMA_IDLE_TTL_SECONDS=0)")
 
     try:
         yield

@@ -46,6 +46,14 @@ export interface SSEState<E> {
   events: E[];
   status: "idle" | "open" | "done" | "error";
   error: string | null;
+  /**
+   * True when a started stream has been open for >2s without delivering
+   * its first event. The backend lazy-loads ChromaDB (5–10s cold start
+   * after idle, see api/chroma_client.py); during that wait the stream
+   * is open but silent. Pages surface a "system is initialising" hint
+   * while this is true. Cleared the moment the first event arrives.
+   */
+  isSlowLoad: boolean;
   start: (opts: SSEStartOptions<E>) => void;
   reset: () => void;
 }
@@ -79,15 +87,32 @@ function parseSSEBuffer<E>(buffer: string): { events: E[]; remainder: string } {
   return { events, remainder };
 }
 
+// Cold-start hint fires after this many ms of an open-but-silent stream.
+const SLOW_LOAD_MS = 2000;
+
 export function useSSE<E extends { type: string }>(): SSEState<E> {
   const [events, setEvents] = useState<E[]>([]);
   const [status, setStatus] = useState<SSEState<E>["status"]>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [isSlowLoad, setIsSlowLoad] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cancel the pending cold-start timer and drop the hint. Called on the
+  // first event, on done/error, and on reset/unmount — anything that means
+  // the stream is no longer silently waiting.
+  const clearSlowLoad = () => {
+    if (slowTimerRef.current !== null) {
+      clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = null;
+    }
+    setIsSlowLoad(false);
+  };
 
   useEffect(
     () => () => {
       abortRef.current?.abort();
+      if (slowTimerRef.current !== null) clearTimeout(slowTimerRef.current);
     },
     [],
   );
@@ -95,6 +120,7 @@ export function useSSE<E extends { type: string }>(): SSEState<E> {
   const reset = () => {
     abortRef.current?.abort();
     abortRef.current = null;
+    clearSlowLoad();
     setEvents([]);
     setStatus("idle");
     setError(null);
@@ -108,7 +134,20 @@ export function useSSE<E extends { type: string }>(): SSEState<E> {
     setStatus("open");
     setError(null);
 
+    // Start the cold-start clock. With a warm backend the first event
+    // lands in well under 2s and clearSlowLoad cancels this; with a cold
+    // ChromaDB the stream stays silent through the 5–10s load and the
+    // hint shows. We key off first-event, not fetch resolution, because
+    // Starlette flushes SSE headers before the generator body runs — the
+    // cold load happens *after* `await fetch` resolves.
+    setIsSlowLoad(false);
+    slowTimerRef.current = setTimeout(() => {
+      slowTimerRef.current = null;
+      setIsSlowLoad(true);
+    }, SLOW_LOAD_MS);
+
     const handleEvent = (ev: E) => {
+      clearSlowLoad();
       setEvents((prev) => [...prev, ev]);
       opts.onEvent?.(ev);
       if (ev.type === "done") {
@@ -123,6 +162,7 @@ export function useSSE<E extends { type: string }>(): SSEState<E> {
     };
 
     const fail = (err: unknown) => {
+      clearSlowLoad();
       if (controller.signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -169,6 +209,7 @@ export function useSSE<E extends { type: string }>(): SSEState<E> {
         // If the server closed the stream without an explicit done event,
         // we still consider the run finished — pages can distinguish
         // "stream ended" from "got done event" via the events array.
+        clearSlowLoad();
         setStatus((s) => (s === "open" ? "done" : s));
       } catch (err) {
         fail(err);
@@ -176,5 +217,5 @@ export function useSSE<E extends { type: string }>(): SSEState<E> {
     })();
   };
 
-  return { events, status, error, start, reset };
+  return { events, status, error, isSlowLoad, start, reset };
 }

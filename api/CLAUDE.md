@@ -37,6 +37,27 @@ guarantees module-level side-effect freedom — `import
 pipeline.profile` does not trigger argparse or open a ChromaDB
 client. Honour that contract from both sides.
 
+## ChromaDB access: `get_chroma_client()`, never construct directly
+
+Never call `chromadb.PersistentClient()` directly in the `api/`
+layer. Always use `get_chroma_client()` from
+[api/chroma_client.py](chroma_client.py).
+
+The API layer lazy-loads ChromaDB on first request and a daemon
+thread evicts it after `CHROMA_IDLE_TTL_SECONDS` of inactivity, so
+an idle backend drops from ~1.2GB to ~50MB instead of pinning the
+store for the process lifetime. That only works if every caller
+shares the one reclaimable client. A direct `PersistentClient(...)`
+opens a second, unmanaged handle that is never evicted and defeats
+the whole mechanism. The existing `asyncio.to_thread(...)` wrapping
+at each call site is unchanged — wrap `get_chroma_client` instead of
+the constructor (`await asyncio.to_thread(get_chroma_client)`).
+
+This is an API-layer rule only. The `pipeline/` modules keep
+creating their own short-lived `PersistentClient` directly — CLI
+runs are one-shot processes, so lazy eviction buys them nothing.
+See docs/rfi_CHROMA_LAZY_LOAD_SPEC.md.
+
 ## SSE event format
 
 All streaming endpoints use Server-Sent Events with this shape:

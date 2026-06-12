@@ -67,10 +67,9 @@ import re
 from pathlib import Path
 from typing import AsyncGenerator
 
-import chromadb
 from openpyxl import load_workbook
 
-from pipeline.ingest import CHROMA_PATH
+from api.chroma_client import get_chroma_client
 from pipeline.mistral_helpers import get_client
 from pipeline.profile import (
     auto_detect_header_row,
@@ -338,9 +337,7 @@ async def run_answer(session_dir: Path) -> AsyncGenerator[dict, None]:
             yield {"type": "error", "data": "No questions found in the upload."}
             return
 
-        chroma_client = await asyncio.to_thread(
-            chromadb.PersistentClient, path=CHROMA_PATH
-        )
+        chroma_client = await asyncio.to_thread(get_chroma_client)
         try:
             collection = await asyncio.to_thread(
                 chroma_client.get_collection, DEFAULT_COLLECTION

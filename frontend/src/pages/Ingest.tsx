@@ -333,8 +333,14 @@ export default function Ingest() {
                 Embedding chunks into all four ChromaDB collections.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               <IngestProgressList perCollection={perCollection} />
+              {ingestSSE.isSlowLoad && (
+                <p className="text-sm text-muted-foreground">
+                  Searching knowledge base… First query may take a few
+                  seconds while the system initialises.
+                </p>
+              )}
             </CardContent>
           </Card>
 

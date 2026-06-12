@@ -33,11 +33,9 @@ import shutil
 from pathlib import Path
 from typing import AsyncGenerator
 
-import chromadb
-
+from api.chroma_client import get_chroma_client
 from pipeline.ingest import (
     BATCH_SIZE,
-    CHROMA_PATH,
     COLLECTIONS,
     chunk_id,
     embed_batch,
@@ -185,9 +183,7 @@ async def run_ingest(
             return
 
         # ── 5. ChromaDB + Mistral clients ─────────────────────────────────
-        chroma_client = await asyncio.to_thread(
-            chromadb.PersistentClient, path=CHROMA_PATH
-        )
+        chroma_client = await asyncio.to_thread(get_chroma_client)
         mistral_client = get_client()
         state = load_checkpoint()
 
